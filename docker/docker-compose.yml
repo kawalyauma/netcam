@@ -1,0 +1,53 @@
+name: netcam
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-netcam}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-netcam}
+      POSTGRES_DB: ${POSTGRES_DB:-netcam}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-netcam}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ../apps/api/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-netcam}:${POSTGRES_PASSWORD:-netcam}@postgres:5432/${POSTGRES_DB:-netcam}?schema=public
+      # network-agent runs on the HOST (not in this compose project), reachable
+      # via the Docker bridge gateway from inside the api container.
+      NETWORK_AGENT_URL: ${NETWORK_AGENT_URL:-http://host.docker.internal:8787}
+      SEED_ON_START: ${SEED_ON_START:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3000:3000"
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8081:80"
+
+volumes:
+  postgres-data:

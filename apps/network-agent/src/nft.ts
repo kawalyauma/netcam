@@ -16,7 +16,12 @@ const RULESET_PATH = path.join(tmpdir(), "netcam-ruleset.nft");
  * the client's OS probes first; DNS/DHCP to the gateway itself is always
  * allowed so the portal is resolvable and reachable before authorization.
  */
-export function generateRuleset(wanInterface: string, routerVlans: RouterVlanConfig[], portalPort: number): string {
+export function generateRuleset(
+  wanInterface: string,
+  routerVlans: RouterVlanConfig[],
+  portalPort: number,
+  controlPort: number,
+): string {
   const lines: string[] = [];
   lines.push(`table ${TABLE}`);
   lines.push(`delete table ${TABLE}`);
@@ -40,6 +45,10 @@ export function generateRuleset(wanInterface: string, routerVlans: RouterVlanCon
   lines.push(`    type filter hook input priority filter; policy accept;`);
   lines.push(`    ct state established,related accept`);
   for (const r of routerVlans) {
+    // The control API (network-agent <-> main API, shared-secret gated) is
+    // bound on all interfaces so a containerized API can reach it via
+    // host.docker.internal, but it must never be reachable from LAN clients.
+    lines.push(`    iifname "${r.vlanInterface}" tcp dport ${controlPort} drop`);
     lines.push(`    iifname "${r.vlanInterface}" udp dport { 53, 67 } accept`);
     lines.push(`    iifname "${r.vlanInterface}" tcp dport 53 accept`);
     lines.push(`    iifname "${r.vlanInterface}" tcp dport ${portalPort} accept`);
@@ -67,9 +76,10 @@ export async function applyBaseRuleset(
   wanInterface: string,
   routerVlans: RouterVlanConfig[],
   portalPort: number,
+  controlPort: number,
 ): Promise<void> {
   await mkdir(path.dirname(RULESET_PATH), { recursive: true });
-  await writeFile(RULESET_PATH, generateRuleset(wanInterface, routerVlans, portalPort), "utf8");
+  await writeFile(RULESET_PATH, generateRuleset(wanInterface, routerVlans, portalPort, controlPort), "utf8");
   await run("nft", ["-f", RULESET_PATH]);
 }
 

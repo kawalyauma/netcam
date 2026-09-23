@@ -22,7 +22,7 @@ async function bootstrapNetworking() {
   }
 
   await ensureAllVlanInterfaces(config.routerVlans);
-  await applyBaseRuleset(config.wanInterface, config.routerVlans, PORTAL_PORT);
+  await applyBaseRuleset(config.wanInterface, config.routerVlans, PORTAL_PORT, config.port);
   await applyDnsmasqConfig(config.routerVlans);
   for (const router of config.routerVlans) {
     await ensureShapingForRouter(router);
@@ -86,10 +86,15 @@ async function main() {
     console.error(`Networking bootstrap failed (will retry HTTP API anyway): ${(err as Error).message}`);
   });
 
+  // Bound to all interfaces (not just loopback) so a containerized NestJS
+  // API reachable via host.docker.internal can call it — the nft base
+  // ruleset explicitly drops this port from every router VLAN interface
+  // (see nft.ts), and every request still requires the shared secret, so
+  // this isn't actually open to captive-portal clients.
   const controlApp = createHttpServer();
-  controlApp.listen(config.port, "127.0.0.1", () => {
+  controlApp.listen(config.port, "0.0.0.0", () => {
     // eslint-disable-next-line no-console
-    console.log(`network-agent control API listening on 127.0.0.1:${config.port} (API-to-agent only)`);
+    console.log(`network-agent control API listening on :${config.port} (shared-secret gated, blocked from LAN by nft)`);
   });
 
   const portalApp = createPortalApp();

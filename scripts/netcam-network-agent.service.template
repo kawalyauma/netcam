@@ -1,0 +1,19 @@
+[Unit]
+Description=NetCam network-agent (nftables/dnsmasq/tc controller)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO_ROOT__/apps/network-agent
+EnvironmentFile=__REPO_ROOT__/apps/network-agent/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=3
+# Needs root for nftables/ip/tc/dnsmasq control — this process is the whole
+# security boundary for network admission, keep its own attack surface
+# small (see src/shell.ts for the execFile-only, validated-input policy).
+User=root
+
+[Install]
+WantedBy=multi-user.target

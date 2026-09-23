@@ -14,20 +14,25 @@ const router: RouterVlanConfig = {
 
 describe("generateRuleset", () => {
   it("gates forwarding on the authorized_macs set per router VLAN", () => {
-    const ruleset = generateRuleset("wlan0", [router], 8080);
+    const ruleset = generateRuleset("wlan0", [router], 8080, 8787);
     expect(ruleset).toContain("iifname \"eth0.10\" oifname \"wlan0\" ether saddr @authorized_macs accept");
     expect(ruleset).toContain("policy drop;");
   });
 
   it("DNATs unauthorized port-80 traffic to the portal on that router's gateway IP", () => {
-    const ruleset = generateRuleset("wlan0", [router], 8080);
+    const ruleset = generateRuleset("wlan0", [router], 8080, 8787);
     expect(ruleset).toContain(
       "iifname \"eth0.10\" tcp dport 80 ether saddr != @authorized_macs dnat to 10.50.10.1:8080",
     );
   });
 
   it("always allows DNS/DHCP to the gateway so the portal is reachable before auth", () => {
-    const ruleset = generateRuleset("wlan0", [router], 8080);
+    const ruleset = generateRuleset("wlan0", [router], 8080, 8787);
     expect(ruleset).toContain("iifname \"eth0.10\" udp dport { 53, 67 } accept");
+  });
+
+  it("blocks the network-agent control port from LAN clients", () => {
+    const ruleset = generateRuleset("wlan0", [router], 8080, 8787);
+    expect(ruleset).toContain("iifname \"eth0.10\" tcp dport 8787 drop");
   });
 });
