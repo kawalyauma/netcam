@@ -1,0 +1,17 @@
+{
+  "name": "netcam",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted WiFi hotspot billing, voucher generation, and captive-portal platform",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @netcam/api dev",
+    "dev:web": "pnpm --filter @netcam/web dev",
+    "dev:portal": "pnpm --filter @netcam/portal dev",
+    "dev:network-agent": "pnpm --filter @netcam/network-agent dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test"
+  }
+}

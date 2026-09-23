@@ -1,0 +1,292 @@
+// NetCam data model. See docs/ARCHITECTURE.md section 3 for a narrative summary.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  OPERATOR
+}
+
+model AdminUser {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  role         AdminRole @default(OPERATOR)
+  fullName     String?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  auditLogs    AuditLog[]
+}
+
+enum OutputChannelType {
+  ETHERNET
+  WIFI_AP
+  USB_ETHERNET
+}
+
+/// The gateway box's own physical/logical LAN interfaces. Exactly one is
+/// "active" (isActive=true) at a time per role; the admin dashboard lets the
+/// operator flip which physical uplink is currently serving traffic.
+model OutputChannel {
+  id            String            @id @default(uuid())
+  name          String
+  interfaceName String            @unique // e.g. eth0, enx001122334455
+  type          OutputChannelType
+  isActive      Boolean           @default(false)
+  macAddress    String?
+  notes         String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  routers       Router[]
+}
+
+enum RouterStatus {
+  ONLINE
+  OFFLINE
+  UNKNOWN
+}
+
+/// A physical AP/switch in the chain. Self-referencing parent encodes the
+/// chain topology. vlanId + subnetCidr encode the L2/L3 segment used to
+/// attribute connected users to this specific router (see ARCHITECTURE.md 1.1).
+model Router {
+  id              String        @id @default(uuid())
+  name            String
+  macAddress      String?       @unique
+  model           String?
+  location        String?
+  status          RouterStatus  @default(UNKNOWN)
+  lastSeenAt      DateTime?
+
+  vlanId          Int?          @unique
+  subnetCidr      String?       // e.g. 10.50.3.0/24, one /24 per router segment
+  apSsid          String?
+  apPasswordEnc   String?       // encrypted at rest, not plaintext
+
+  outputChannelId String?
+  outputChannel   OutputChannel? @relation(fields: [outputChannelId], references: [id])
+
+  parentRouterId  String?
+  parentRouter    Router?  @relation("RouterChain", fields: [parentRouterId], references: [id])
+  childRouters    Router[] @relation("RouterChain")
+
+  vouchers        Voucher[]
+  sessions        Session[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([parentRouterId])
+}
+
+enum PackageLimitType {
+  DURATION
+  DATA_CAP
+  DURATION_AND_DATA_CAP
+}
+
+/// A sellable plan.
+model Package {
+  id              String            @id @default(uuid())
+  name            String
+  description     String?
+  priceUgx        Int
+  limitType       PackageLimitType  @default(DURATION)
+  durationMinutes Int?
+  dataCapMb       Int?
+  downKbps        Int               // download speed cap
+  upKbps          Int               // upload speed cap
+  deviceLimit     Int               @default(1) // max concurrent MACs per voucher (anti-reshare)
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  vouchers Voucher[]
+  payments Payment[]
+}
+
+enum VoucherStatus {
+  UNUSED
+  ACTIVE
+  EXPIRED
+  DEPLETED
+  SUSPENDED
+}
+
+model Voucher {
+  id            String        @id @default(uuid())
+  code          String        @unique // human-friendly, e.g. ABCD-1234-EFGH
+  packageId     String
+  package       Package       @relation(fields: [packageId], references: [id])
+  status        VoucherStatus @default(UNUSED)
+
+  generatedAtRouterId String?
+  generatedAtRouter   Router? @relation(fields: [generatedAtRouterId], references: [id])
+
+  customerId    String?
+  customer      Customer?     @relation(fields: [customerId], references: [id])
+
+  activatedAt   DateTime?
+  expiresAt     DateTime?
+  dataUsedMb    Float         @default(0)
+
+  batchLabel    String?       // for bulk-printed voucher batches
+
+  devices  Device[]
+  sessions Session[]
+  payment  Payment?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([customerId])
+}
+
+/// A MAC address bound to a voucher. Enforces the phone/device limit and
+/// lets us block a specific device without killing the whole voucher.
+model Device {
+  id           String    @id @default(uuid())
+  macAddress   String
+  voucherId    String
+  voucher      Voucher   @relation(fields: [voucherId], references: [id])
+  firstSeenAt  DateTime  @default(now())
+  lastSeenAt   DateTime  @default(now())
+  userAgent    String?
+  isBlocked    Boolean   @default(false)
+  sessions     Session[]
+
+  @@unique([voucherId, macAddress])
+  @@index([macAddress])
+}
+
+/// A connection window for a device on a router. Traffic counters + TTL
+/// anomaly score feed the anti-resharing heuristic.
+model Session {
+  id              String    @id @default(uuid())
+  deviceId        String
+  device          Device    @relation(fields: [deviceId], references: [id])
+  voucherId       String
+  voucher         Voucher   @relation(fields: [voucherId], references: [id])
+  routerId        String?
+  router          Router?   @relation(fields: [routerId], references: [id])
+
+  ipAddress       String?
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  bytesUp         BigInt    @default(0)
+  bytesDown       BigInt    @default(0)
+  ttlAnomalyScore Float     @default(0) // 0 = normal, higher = more likely re-shared
+
+  @@index([voucherId])
+  @@index([routerId])
+}
+
+/// Phone-number identity, used for the "I lost my voucher" recovery flow
+/// and as the payer identity for mobile-money payments.
+model Customer {
+  id          String   @id @default(uuid())
+  phoneNumber String   @unique
+  name        String?
+  createdAt   DateTime @default(now())
+
+  vouchers Voucher[]
+  payments Payment[]
+  smsLogs  SmsLog[]
+}
+
+enum PaymentProvider {
+  SSENTEZO
+  MANUAL
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  CANCELLED
+}
+
+model Payment {
+  id           String          @id @default(uuid())
+  provider     PaymentProvider @default(SSENTEZO)
+  providerRef  String?         @unique // Ssentezo transaction id
+  amountUgx    Int
+  status       PaymentStatus   @default(PENDING)
+
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id])
+  packageId    String
+  package      Package  @relation(fields: [packageId], references: [id])
+
+  voucherId    String?  @unique
+  voucher      Voucher? @relation(fields: [voucherId], references: [id])
+
+  rawRequest   Json?
+  rawWebhook   Json?
+  failureReason String?
+
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  smsLogs SmsLog[]
+
+  @@index([status])
+}
+
+enum SmsProviderName {
+  EGO_SMS
+}
+
+enum SmsStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+}
+
+model SmsLog {
+  id          String          @id @default(uuid())
+  provider    SmsProviderName @default(EGO_SMS)
+  providerRef String?
+  toPhone     String
+  message     String
+  status      SmsStatus       @default(QUEUED)
+  error       String?
+
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id])
+  paymentId   String?
+  payment     Payment?  @relation(fields: [paymentId], references: [id])
+
+  attempts    Int       @default(0)
+  createdAt   DateTime  @default(now())
+  sentAt      DateTime?
+}
+
+model AuditLog {
+  id          String     @id @default(uuid())
+  adminUserId String?
+  adminUser   AdminUser? @relation(fields: [adminUserId], references: [id])
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  createdAt   DateTime   @default(now())
+
+  @@index([entityType, entityId])
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
