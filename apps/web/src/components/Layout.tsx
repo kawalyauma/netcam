@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { to: "/payments", label: "Payments" },
   { to: "/customers", label: "Customers" },
   { to: "/settings", label: "Settings" },
+  { to: "/admin-users", label: "Admin Users", superAdminOnly: true },
 ];
 
 export function Layout() {
@@ -23,7 +24,7 @@ export function Layout() {
       <aside className="w-56 bg-slate-900 text-slate-100 flex flex-col shrink-0">
         <div className="px-4 py-5 font-semibold text-lg border-b border-slate-800">NetCam</div>
         <nav className="flex-1 py-3">
-          {NAV_ITEMS.map((item) => (
+          {NAV_ITEMS.filter((item) => !item.superAdminOnly || user.role === "SUPER_ADMIN").map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

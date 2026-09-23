@@ -1,12 +1,12 @@
 import { config } from "./config";
 import { createHttpServer } from "./http-server";
 import { createPortalApp } from "./portal-proxy";
-import { applyBaseRuleset, revokeMac } from "./nft";
+import { admitMac, applyBaseRuleset, revokeMac } from "./nft";
 import { ensureAllVlanInterfaces } from "./vlan";
 import { applyDnsmasqConfig } from "./dnsmasq";
-import { ensureShapingForRouter, readClassBytes, removeShapingForMac } from "./tc";
+import { applyShapingForMac, ensureShapingForRouter, readClassBytes, removeShapingForMac } from "./tc";
 import { sampleTtls } from "./ttl-sampler";
-import { sendHeartbeat, sendTrafficReport } from "./api-client";
+import { fetchActiveSessions, sendHeartbeat, sendTrafficReport } from "./api-client";
 import { admitted } from "./state";
 
 const PORTAL_PORT = Number(process.env.PORTAL_PORT ?? 8080);
@@ -29,6 +29,37 @@ async function bootstrapNetworking() {
   }
   // eslint-disable-next-line no-console
   console.log(`network-agent: networking bootstrapped for ${config.routerVlans.length} router(s).`);
+}
+
+/**
+ * Re-admits every session the API still considers active. Must run right
+ * after bootstrapNetworking(), which just wiped the authorized_macs set by
+ * recreating the nftables table — without this, every paying customer
+ * would be silently disconnected on every agent restart/update/reboot.
+ */
+async function reconcileActiveSessions() {
+  if (config.routerVlans.length === 0) return;
+
+  const sessions = await fetchActiveSessions();
+  let restored = 0;
+  for (const session of sessions) {
+    const router = config.routerVlans.find((r) => r.routerId === session.routerId);
+    if (!router) continue; // not one of this box's configured routers
+
+    const timeoutSeconds = Math.max(60, Math.ceil((new Date(session.sessionExpiresAt).getTime() - Date.now()) / 1000));
+    await admitMac(session.macAddress, timeoutSeconds).catch(() => undefined);
+    await applyShapingForMac(router, session.macAddress, session.downKbps, session.upKbps).catch(() => undefined);
+    admitted.set(session.macAddress.toUpperCase(), {
+      mac: session.macAddress.toUpperCase(),
+      router,
+      sessionExpiresAt: new Date(session.sessionExpiresAt).getTime(),
+      lastDownBytes: 0,
+      lastUpBytes: 0,
+    });
+    restored++;
+  }
+  // eslint-disable-next-line no-console
+  console.log(`network-agent: reconciled ${restored}/${sessions.length} active session(s) from the API on startup.`);
 }
 
 function startHeartbeatLoop() {
@@ -84,6 +115,10 @@ async function main() {
   await bootstrapNetworking().catch((err) => {
     // eslint-disable-next-line no-console
     console.error(`Networking bootstrap failed (will retry HTTP API anyway): ${(err as Error).message}`);
+  });
+  await reconcileActiveSessions().catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error(`Session reconciliation failed: ${(err as Error).message}`);
   });
 
   // Bound to all interfaces (not just loopback) so a containerized NestJS

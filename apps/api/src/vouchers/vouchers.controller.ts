@@ -31,4 +31,15 @@ export class VouchersController {
   suspend(@Param("id") id: string, @Body("reason") reason: string, @CurrentUser() user: AuthenticatedAdmin) {
     return this.service.suspend(id, user.id, reason ?? "manual suspension");
   }
+
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.OPERATOR)
+  @Patch(":id/devices/:deviceId")
+  setDeviceBlocked(
+    @Param("id") id: string,
+    @Param("deviceId") deviceId: string,
+    @Body("isBlocked") isBlocked: boolean,
+    @CurrentUser() user: AuthenticatedAdmin,
+  ) {
+    return this.service.setDeviceBlocked(id, deviceId, Boolean(isBlocked), user.id);
+  }
 }

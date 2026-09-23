@@ -18,6 +18,8 @@ import { PortalModule } from "./portal/portal.module";
 import { NetworkAgentBridgeModule } from "./network-agent-bridge/network-agent-bridge.module";
 import { SettingsModule } from "./settings/settings.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
+import { AdminUsersModule } from "./admin-users/admin-users.module";
+import { HealthModule } from "./health/health.module";
 
 @Module({
   imports: [
@@ -39,6 +41,8 @@ import { DashboardModule } from "./dashboard/dashboard.module";
     NetworkAgentBridgeModule,
     SettingsModule,
     DashboardModule,
+    AdminUsersModule,
+    HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

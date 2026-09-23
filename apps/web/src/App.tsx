@@ -9,6 +9,7 @@ import Vouchers from "./pages/Vouchers";
 import Payments from "./pages/Payments";
 import Customers from "./pages/Customers";
 import Settings from "./pages/Settings";
+import AdminUsers from "./pages/AdminUsers";
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/payments" element={<Payments />} />
         <Route path="/customers" element={<Customers />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/admin-users" element={<AdminUsers />} />
       </Route>
     </Routes>
   );

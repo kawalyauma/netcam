@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { PageHeader, Card, Badge, Button, Table } from "../components/ui";
 import type { Package, Voucher } from "../lib/types";
@@ -9,6 +9,7 @@ export default function Vouchers() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ packageId: "", count: "10", batchLabel: "" });
   const [statusFilter, setStatusFilter] = useState("");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   async function load() {
     const query = statusFilter ? `?status=${statusFilter}` : "";
@@ -41,6 +42,20 @@ export default function Vouchers() {
     const reason = window.prompt("Reason for suspending this voucher?") ?? "manual suspension";
     await api.patch(`/vouchers/${id}/suspend`, { reason });
     load();
+  }
+
+  async function toggleDeviceBlocked(voucherId: string, deviceId: string, isBlocked: boolean) {
+    await api.patch(`/vouchers/${voucherId}/devices/${deviceId}`, { isBlocked });
+    load();
+  }
+
+  function toggleExpanded(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   const toneFor: Record<Voucher["status"], "green" | "gray" | "red" | "amber"> = {
@@ -101,16 +116,48 @@ export default function Vouchers() {
           </thead>
           <tbody>
             {vouchers.map((v) => (
-              <tr key={v.id} className="border-t border-slate-100">
-                <td className="px-4 py-2.5 font-mono text-xs">{v.code}</td>
-                <td className="px-4 py-2.5">{v.package.name}</td>
-                <td className="px-4 py-2.5"><Badge tone={toneFor[v.status]}>{v.status}</Badge></td>
-                <td className="px-4 py-2.5 text-xs text-slate-500">{v.devices?.length ?? 0}/{v.package.deviceLimit}</td>
-                <td className="px-4 py-2.5 text-xs text-slate-500">{v.expiresAt ? new Date(v.expiresAt).toLocaleString() : "—"}</td>
-                <td className="px-4 py-2.5 text-right">
-                  {v.status === "ACTIVE" && <Button variant="danger" onClick={() => suspend(v.id)}>Suspend</Button>}
-                </td>
-              </tr>
+              <Fragment key={v.id}>
+                <tr className="border-t border-slate-100">
+                  <td className="px-4 py-2.5 font-mono text-xs">{v.code}</td>
+                  <td className="px-4 py-2.5">{v.package.name}</td>
+                  <td className="px-4 py-2.5"><Badge tone={toneFor[v.status]}>{v.status}</Badge></td>
+                  <td className="px-4 py-2.5 text-xs">
+                    <button
+                      className="text-slate-600 underline decoration-dotted"
+                      onClick={() => toggleExpanded(v.id)}
+                      disabled={!v.devices?.length}
+                    >
+                      {v.devices?.length ?? 0}/{v.package.deviceLimit}
+                    </button>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-slate-500">{v.expiresAt ? new Date(v.expiresAt).toLocaleString() : "—"}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    {v.status === "ACTIVE" && <Button variant="danger" onClick={() => suspend(v.id)}>Suspend</Button>}
+                  </td>
+                </tr>
+                {expanded.has(v.id) && v.devices && v.devices.length > 0 && (
+                  <tr className="bg-slate-50">
+                    <td colSpan={6} className="px-4 py-2">
+                      <div className="space-y-1">
+                        {v.devices.map((d) => (
+                          <div key={d.id} className="flex items-center justify-between text-xs py-1">
+                            <span className="font-mono">{d.macAddress}</span>
+                            <div className="flex items-center gap-2">
+                              {d.isBlocked ? <Badge tone="red">Blocked</Badge> : <Badge tone="green">Allowed</Badge>}
+                              <Button
+                                variant={d.isBlocked ? "secondary" : "danger"}
+                                onClick={() => toggleDeviceBlocked(v.id, d.id, !d.isBlocked)}
+                              >
+                                {d.isBlocked ? "Unblock" : "Block"}
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </Table>

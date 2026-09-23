@@ -174,6 +174,31 @@ export class VouchersService {
     await this.audit.log({ adminUserId, action: "VOUCHER_SUSPENDED", entityType: "Voucher", entityId: id, metadata: { reason } });
   }
 
+  /** Per-device kill switch — blocks one device on a voucher without suspending the whole voucher. */
+  async setDeviceBlocked(voucherId: string, deviceId: string, isBlocked: boolean, adminUserId: string) {
+    const device = await this.prisma.device.findUnique({ where: { id: deviceId } });
+    if (!device || device.voucherId !== voucherId) {
+      throw new NotFoundException("Device not found on this voucher");
+    }
+
+    const updated = await this.prisma.device.update({ where: { id: deviceId }, data: { isBlocked } });
+
+    if (isBlocked) {
+      await this.networkAgent.revoke({ macAddress: device.macAddress, reason: "device blocked by admin" });
+      await this.prisma.session.updateMany({ where: { deviceId, endedAt: null }, data: { endedAt: new Date() } });
+    }
+
+    await this.audit.log({
+      adminUserId,
+      action: isBlocked ? "DEVICE_BLOCKED" : "DEVICE_UNBLOCKED",
+      entityType: "Device",
+      entityId: deviceId,
+      metadata: { voucherId, macAddress: device.macAddress },
+    });
+
+    return updated;
+  }
+
   private normalizeCode(code: string): string {
     return code.trim().toUpperCase();
   }
