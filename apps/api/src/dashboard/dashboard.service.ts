@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { PaymentStatus, RouterStatus, VoucherStatus } from "@netcam/shared";
+import { PaymentStatus, VoucherStatus } from "@netcam/shared";
 import { PrismaService } from "../prisma/prisma.service";
 
 const ONLINE_WINDOW_MS = 3 * 60 * 1000;

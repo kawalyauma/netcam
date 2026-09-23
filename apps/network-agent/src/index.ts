@@ -13,7 +13,6 @@ const PORTAL_PORT = Number(process.env.PORTAL_PORT ?? 8080);
 
 async function bootstrapNetworking() {
   if (config.routerVlans.length === 0) {
-    // eslint-disable-next-line no-console
     console.warn(
       "ROUTER_VLANS is empty — network-agent will run its HTTP API only, with no nftables/dnsmasq/tc " +
         "setup. Configure routers in the admin dashboard, set ROUTER_VLANS in .env, and restart.",
@@ -27,7 +26,6 @@ async function bootstrapNetworking() {
   for (const router of config.routerVlans) {
     await ensureShapingForRouter(router);
   }
-  // eslint-disable-next-line no-console
   console.log(`network-agent: networking bootstrapped for ${config.routerVlans.length} router(s).`);
 }
 
@@ -58,7 +56,6 @@ async function reconcileActiveSessions() {
     });
     restored++;
   }
-  // eslint-disable-next-line no-console
   console.log(`network-agent: reconciled ${restored}/${sessions.length} active session(s) from the API on startup.`);
 }
 
@@ -113,11 +110,9 @@ function startTrafficAndTtlLoop() {
 
 async function main() {
   await bootstrapNetworking().catch((err) => {
-    // eslint-disable-next-line no-console
     console.error(`Networking bootstrap failed (will retry HTTP API anyway): ${(err as Error).message}`);
   });
   await reconcileActiveSessions().catch((err) => {
-    // eslint-disable-next-line no-console
     console.error(`Session reconciliation failed: ${(err as Error).message}`);
   });
 
@@ -128,13 +123,11 @@ async function main() {
   // this isn't actually open to captive-portal clients.
   const controlApp = createHttpServer();
   controlApp.listen(config.port, "0.0.0.0", () => {
-    // eslint-disable-next-line no-console
     console.log(`network-agent control API listening on :${config.port} (shared-secret gated, blocked from LAN by nft)`);
   });
 
   const portalApp = createPortalApp();
   portalApp.listen(PORTAL_PORT, "0.0.0.0", () => {
-    // eslint-disable-next-line no-console
     console.log(`network-agent captive portal listening on 0.0.0.0:${PORTAL_PORT} (open to LAN clients)`);
   });
 
@@ -144,7 +137,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error(err);
   process.exit(1);
 });

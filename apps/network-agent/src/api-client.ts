@@ -17,7 +17,6 @@ export async function sendHeartbeat(routerId: string, vlanId: number, iface: str
       timestamp: new Date().toISOString(),
     })
     .catch((err) => {
-      // eslint-disable-next-line no-console
       console.warn(`heartbeat to API failed: ${(err as Error).message}`);
     });
 }
@@ -36,7 +35,6 @@ export async function fetchActiveSessions(): Promise<ActiveSessionRecord[]> {
     const { data } = await apiClient.get<ActiveSessionRecord[]>("/api/network-agent/active-sessions");
     return data;
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn(`fetching active sessions for reconciliation failed: ${(err as Error).message}`);
     return [];
   }
@@ -48,7 +46,6 @@ export async function sendTrafficReport(
 ) {
   if (samples.length === 0) return;
   await apiClient.post("/api/sessions/traffic-report", { routerId, samples }).catch((err) => {
-    // eslint-disable-next-line no-console
     console.warn(`traffic report to API failed: ${(err as Error).message}`);
   });
 }
