@@ -13,3 +13,4 @@ apps/api/generated/
 pnpm-lock.yaml.bak
 postgres-data/
 apps/portal/dist/
+apps/web/dist/
