@@ -12,3 +12,4 @@ apps/api/prisma/dev.db
 apps/api/generated/
 pnpm-lock.yaml.bak
 postgres-data/
+apps/portal/dist/

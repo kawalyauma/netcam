@@ -1,0 +1,16 @@
+{
+  "name": "@netcam/portal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Captive portal page — hand-rolled, no framework, kept tiny so it loads fast over a fresh WiFi association.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview",
+    "lint": "eslint \"src/**/*.ts\""
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}

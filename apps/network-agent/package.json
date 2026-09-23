@@ -1,0 +1,27 @@
+{
+  "name": "@netcam/network-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Host-side controller: owns nftables, VLAN interfaces, dnsmasq, and tc shaping. Must run as root/NET_ADMIN directly on the gateway box, NOT in Docker.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint \"src/**/*.ts\"",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@netcam/shared": "workspace:*",
+    "axios": "^1.7.9",
+    "express": "^4.21.2",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

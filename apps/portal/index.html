@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <title>WiFi Access</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --accent: #1d6f42;
+        --bg: #f5f6f8;
+        --card: #ffffff;
+        --text: #1a1a1a;
+        --muted: #6b7280;
+        --danger: #b3261e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        padding: 24px 16px;
+      }
+      main { width: 100%; max-width: 420px; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      p.subtitle { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+      .card {
+        background: var(--card);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      }
+      .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+      .tab {
+        flex: 1;
+        padding: 10px;
+        text-align: center;
+        border-radius: 8px;
+        background: var(--card);
+        font-size: 13px;
+        cursor: pointer;
+        border: 1px solid transparent;
+      }
+      .tab.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+      .pkg {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        cursor: pointer;
+      }
+      .pkg.selected { border-color: var(--accent); background: #eef7f0; }
+      .pkg .price { font-weight: 600; }
+      input {
+        width: 100%;
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid #d1d5db;
+        font-size: 16px;
+        margin-bottom: 10px;
+      }
+      button {
+        width: 100%;
+        padding: 13px;
+        border: none;
+        border-radius: 8px;
+        background: var(--accent);
+        color: white;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.6; }
+      button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+      .msg { font-size: 13px; margin-top: 8px; }
+      .msg.error { color: var(--danger); }
+      .msg.ok { color: var(--accent); }
+      .hidden { display: none !important; }
+      footer { text-align: center; font-size: 11px; color: var(--muted); margin-top: 16px; }
+      .status-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: #eef7f0;
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>WiFi Access</h1>
+      <p class="subtitle" id="subtitle">Connect and start browsing</p>
+
+      <section id="connected-view" class="card hidden">
+        <span class="status-badge">Connected</span>
+        <p id="connected-details" style="margin-top:10px;font-size:14px;"></p>
+      </section>
+
+      <section id="app-view" class="hidden">
+        <div class="tabs">
+          <div class="tab active" data-tab="buy">Buy</div>
+          <div class="tab" data-tab="code">Have a code</div>
+          <div class="tab" data-tab="recover">Lost code</div>
+        </div>
+
+        <div id="tab-buy" class="tab-panel">
+          <div class="card" id="package-list"><p class="subtitle">Loading packages…</p></div>
+          <div class="card">
+            <input id="buy-phone" type="tel" placeholder="Phone number (07XXXXXXXX)" />
+            <button id="buy-submit">Pay</button>
+            <p class="msg" id="buy-msg"></p>
+          </div>
+        </div>
+
+        <div id="tab-code" class="tab-panel hidden">
+          <div class="card">
+            <input id="code-input" type="text" placeholder="Voucher code e.g. AB12-CD34-EF56" autocapitalize="characters" />
+            <button id="code-submit">Connect</button>
+            <p class="msg" id="code-msg"></p>
+          </div>
+        </div>
+
+        <div id="tab-recover" class="tab-panel hidden">
+          <div class="card">
+            <p style="font-size:13px;color:var(--muted);margin-top:0;">Enter the phone number you paid with — we'll text you a recovery code.</p>
+            <input id="recover-phone" type="tel" placeholder="Phone number" />
+            <button id="recover-request">Send code</button>
+            <div id="recover-otp-block" class="hidden" style="margin-top:10px;">
+              <input id="recover-otp" type="text" inputmode="numeric" placeholder="6-digit code" />
+              <button id="recover-confirm">Verify</button>
+            </div>
+            <p class="msg" id="recover-msg"></p>
+          </div>
+        </div>
+      </section>
+
+      <footer>Powered by NetCam</footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
