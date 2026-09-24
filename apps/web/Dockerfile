@@ -12,6 +12,7 @@ RUN pnpm install --frozen-lockfile --filter @netcam/web...
 FROM deps AS build
 COPY packages/shared packages/shared
 COPY apps/web apps/web
+RUN pnpm --filter @netcam/shared build
 RUN pnpm --filter @netcam/web build
 
 FROM nginx:1.27-alpine AS production

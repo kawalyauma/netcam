@@ -1,5 +1,6 @@
 # Build context is the repo root (pnpm workspace) — see docker/docker-compose.yml
 FROM node:22-alpine AS base
+RUN apk add --no-cache openssl
 RUN corepack enable
 WORKDIR /repo
 
@@ -12,6 +13,7 @@ RUN pnpm install --frozen-lockfile --filter @netcam/api...
 FROM deps AS build
 COPY packages/shared packages/shared
 COPY apps/api apps/api
+RUN pnpm --filter @netcam/shared build
 RUN pnpm --filter @netcam/api exec prisma generate
 RUN pnpm --filter @netcam/api build
 

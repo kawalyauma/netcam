@@ -96,7 +96,8 @@ fi
 log "Installing dependencies…"
 pnpm install --frozen-lockfile
 
-log "Building portal and network-agent…"
+log "Building shared package, portal, and network-agent…"
+pnpm --filter @netcam/shared build
 pnpm --filter @netcam/portal build
 pnpm --filter @netcam/network-agent build
 
