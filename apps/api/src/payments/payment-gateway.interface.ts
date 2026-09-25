@@ -20,9 +20,11 @@ export interface InitiateDepositResult {
 export interface StatusResult {
   ok: boolean;
   transactionStatus?: GatewayTransactionStatus;
+  externalReference?: string;
   providerRef?: string;
   financialTransactionId?: string;
   amount?: number;
+  currency?: string;
   errorMessage?: string;
 }
 

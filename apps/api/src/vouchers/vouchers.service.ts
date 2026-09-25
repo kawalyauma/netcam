@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { VoucherStatus } from "@netcam/shared";
+import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { NetworkAgentBridgeService } from "../network-agent-bridge/network-agent-bridge.service";
@@ -147,17 +148,18 @@ export class VouchersService {
   }
 
   /** Issues a single voucher tied to a paying customer's phone (used by the payments flow). */
-  async issueForPayment(packageId: string, customerId: string) {
-    const pkg = await this.prisma.package.findUnique({ where: { id: packageId } });
+  async issueForPayment(packageId: string, customerId: string, tx?: Prisma.TransactionClient) {
+    const db = tx ?? this.prisma;
+    const pkg = await db.package.findUnique({ where: { id: packageId } });
     if (!pkg) throw new BadRequestException("Unknown packageId");
 
     let code = generateVoucherCode();
     // Astronomically unlikely to collide, but guard anyway since code is unique.
-    while (await this.prisma.voucher.findUnique({ where: { code } })) {
+    while (await db.voucher.findUnique({ where: { code } })) {
       code = generateVoucherCode();
     }
 
-    return this.prisma.voucher.create({
+    return db.voucher.create({
       data: { code, packageId, customerId },
       include: { package: true },
     });

@@ -35,7 +35,7 @@ async function ignoreIfExists(promise: Promise<unknown>): Promise<void> {
   try {
     await promise;
   } catch (err) {
-    if (!/File exists/i.test((err as Error).message)) throw err;
+    if (!/File exists|Exclusivity flag on/i.test((err as Error).message)) throw err;
   }
 }
 

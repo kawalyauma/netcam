@@ -60,8 +60,11 @@ cosmetic label), each router gets its own **VLAN**:
   populates "active routers" and "users per router."
 - **If a vendor's routers can't do VLANs**, the system still works as a
   single flat network — the dashboard will show one "Unassigned segment"
-  bucket for all users instead of per-router breakdown. This is called
-  out explicitly in the setup script/README so it's not a silent gap.
+  bucket for all users instead of per-router breakdown. Configure that
+  router with `ROUTER_LANS=interface:subnetId:routerId`, disable its DHCP
+  server, put it in AP/bridge mode, and connect the gateway cable to a LAN
+  port. This is called out explicitly in the setup script/README so it's
+  not a silent gap.
 
 ### 1.2 Software stack on the box
 

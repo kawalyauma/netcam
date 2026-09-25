@@ -89,7 +89,7 @@ fi
 if [ ! -f apps/network-agent/.env ]; then
   cp apps/network-agent/.env.example apps/network-agent/.env
   sed -i "s#^NETWORK_AGENT_SHARED_SECRET=.*#NETWORK_AGENT_SHARED_SECRET=${SHARED_SECRET}#" apps/network-agent/.env
-  warn "Created apps/network-agent/.env — set WAN_INTERFACE and ROUTER_VLANS for your hardware (see docs/ARCHITECTURE.md §1.1). Routers must exist in the admin dashboard first to get their IDs."
+  warn "Created apps/network-agent/.env — set WAN_INTERFACE plus ROUTER_VLANS or ROUTER_LANS for your hardware (see docs/ARCHITECTURE.md §1.1). Routers must exist in the admin dashboard first to get their IDs."
 fi
 
 ### 3. Build workspace apps ####################################################
@@ -117,5 +117,5 @@ echo ""
 echo "Next steps:"
 echo "  1. Admin dashboard: http://<this-box-ip>:8081 (default login is seeded — see apps/api/prisma/seed.ts, change the password immediately)"
 echo "  2. Edit apps/api/.env with your Ssentezo and EGO SMS credentials, then: docker compose -f docker/docker-compose.yml up -d --build"
-echo "  3. Add your routers in the dashboard, note their IDs, then set ROUTER_VLANS in apps/network-agent/.env and: systemctl restart netcam-network-agent"
+echo "  3. Add routers in the dashboard, then set ROUTER_VLANS (managed VLAN) or ROUTER_LANS (ordinary AP) in apps/network-agent/.env and restart the agent."
 echo "  4. Edit packages/pricing from the dashboard's Packages page."

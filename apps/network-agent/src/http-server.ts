@@ -22,7 +22,7 @@ export function createHttpServer() {
     try {
       const router = config.routerVlans.find((r) => r.routerId === body.routerId);
       if (!router) {
-        res.status(400).json({ ok: false, error: `Unknown routerId ${body.routerId} (not in ROUTER_VLANS)` });
+        res.status(400).json({ ok: false, error: `Unknown routerId ${body.routerId} (not in ROUTER_VLANS or ROUTER_LANS)` });
         return;
       }
 

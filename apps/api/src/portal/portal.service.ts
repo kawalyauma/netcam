@@ -30,9 +30,14 @@ export class PortalService {
   ) {}
 
   async redeem(dto: PortalRedeemDto) {
-    const router = dto.routerVlanId
-      ? await this.prisma.router.findUnique({ where: { vlanId: dto.routerVlanId } })
-      : null;
+    // routerId comes from the host-side portal proxy, not from the browser,
+    // and works for both tagged VLANs and ordinary untagged LAN segments.
+    // Keep vlanId as a fallback for older network-agent deployments.
+    const router = dto.routerId
+      ? await this.prisma.router.findUnique({ where: { id: dto.routerId } })
+      : dto.routerVlanId
+        ? await this.prisma.router.findUnique({ where: { vlanId: dto.routerVlanId } })
+        : null;
     return this.vouchers.redeem(
       {
         voucherCode: dto.voucherCode,

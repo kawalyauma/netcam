@@ -56,6 +56,7 @@ export function createPortalRouter() {
         voucherCode: req.body.voucherCode,
         macAddress: mac,
         ipAddress: ip,
+        routerId: routerVlan?.routerId,
         routerVlanId: routerVlan?.vlanId,
         userAgent: req.headers["user-agent"],
       },

@@ -9,7 +9,7 @@ function subnetPrefix(cidr: string): string {
   return cidr.split("/")[0].split(".").slice(0, 3).join(".") + ".";
 }
 
-export function generateDnsmasqConf(routerVlans: RouterVlanConfig[]): string {
+export function generateDnsmasqConf(routerVlans: RouterVlanConfig[], portalPort: number): string {
   const lines: string[] = ["# Managed by @netcam/network-agent — do not edit by hand.", ""];
   for (const r of routerVlans) {
     const prefix = subnetPrefix(r.subnetCidr);
@@ -17,15 +17,19 @@ export function generateDnsmasqConf(routerVlans: RouterVlanConfig[]): string {
     lines.push(`dhcp-range=set:router-${r.routerId},${prefix}10,${prefix}250,255.255.255.0,12h`);
     lines.push(`dhcp-option=tag:router-${r.routerId},option:router,${r.gatewayIp}`);
     lines.push(`dhcp-option=tag:router-${r.routerId},option:dns-server,${r.gatewayIp}`);
+    // RFC 8910: explicitly advertise the captive-portal API. Modern Android,
+    // iOS, macOS, and Windows clients can use this to show their "Sign in to
+    // network" UI without relying only on intercepted HTTP probe traffic.
+    lines.push(`dhcp-option=tag:router-${r.routerId},114,http://${r.gatewayIp}:${portalPort}/`);
     lines.push("");
   }
   return lines.join("\n");
 }
 
-export async function applyDnsmasqConfig(routerVlans: RouterVlanConfig[]): Promise<void> {
+export async function applyDnsmasqConfig(routerVlans: RouterVlanConfig[], portalPort: number): Promise<void> {
   if (routerVlans.length === 0) return;
   const confPath = path.join(config.dnsmasqConfDir, "netcam-routers.conf");
-  await writeFile(confPath, generateDnsmasqConf(routerVlans), "utf8");
+  await writeFile(confPath, generateDnsmasqConf(routerVlans, portalPort), "utf8");
   await run("systemctl", ["restart", "dnsmasq"]);
 }
 

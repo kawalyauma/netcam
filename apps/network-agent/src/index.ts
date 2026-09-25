@@ -14,15 +14,15 @@ const PORTAL_PORT = Number(process.env.PORTAL_PORT ?? 8080);
 async function bootstrapNetworking() {
   if (config.routerVlans.length === 0) {
     console.warn(
-      "ROUTER_VLANS is empty — network-agent will run its HTTP API only, with no nftables/dnsmasq/tc " +
-        "setup. Configure routers in the admin dashboard, set ROUTER_VLANS in .env, and restart.",
+      "ROUTER_VLANS and ROUTER_LANS are empty — network-agent will run its HTTP API only, with no " +
+        "nftables/dnsmasq/tc setup. Configure a router segment in .env and restart.",
     );
     return;
   }
 
   await ensureAllVlanInterfaces(config.routerVlans);
   await applyBaseRuleset(config.wanInterface, config.routerVlans, PORTAL_PORT, config.port);
-  await applyDnsmasqConfig(config.routerVlans);
+  await applyDnsmasqConfig(config.routerVlans, PORTAL_PORT);
   for (const router of config.routerVlans) {
     await ensureShapingForRouter(router);
   }
@@ -63,7 +63,7 @@ function startHeartbeatLoop() {
   setInterval(() => {
     for (const router of config.routerVlans) {
       const macs = [...admitted.values()].filter((a) => a.router.routerId === router.routerId).map((a) => a.mac);
-      void sendHeartbeat(router.routerId, router.vlanId, router.vlanInterface, macs);
+      void sendHeartbeat(router.routerId, router.vlanId ?? 0, router.vlanInterface, macs);
     }
   }, 30_000);
 }

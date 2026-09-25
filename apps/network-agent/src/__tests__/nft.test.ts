@@ -5,6 +5,7 @@ import type { RouterVlanConfig } from "../config";
 const router: RouterVlanConfig = {
   parentInterface: "eth0",
   vlanId: 10,
+  subnetId: 10,
   routerId: "router-a",
   vlanInterface: "eth0.10",
   ifbInterface: "ifb-v10",
@@ -16,13 +17,14 @@ describe("generateRuleset", () => {
   it("gates forwarding on the authorized_macs set per router VLAN", () => {
     const ruleset = generateRuleset("wlan0", [router], 8080, 8787);
     expect(ruleset).toContain("iifname \"eth0.10\" oifname \"wlan0\" ether saddr @authorized_macs accept");
-    expect(ruleset).toContain("policy drop;");
+    expect(ruleset).toContain('iifname "eth0.10" drop');
+    expect(ruleset).toContain("policy accept;");
   });
 
   it("DNATs unauthorized port-80 traffic to the portal on that router's gateway IP", () => {
     const ruleset = generateRuleset("wlan0", [router], 8080, 8787);
     expect(ruleset).toContain(
-      "iifname \"eth0.10\" tcp dport 80 ether saddr != @authorized_macs dnat to 10.50.10.1:8080",
+      "iifname \"eth0.10\" tcp dport 80 ether saddr != @authorized_macs dnat ip to 10.50.10.1:8080",
     );
   });
 

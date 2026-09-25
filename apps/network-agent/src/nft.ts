@@ -32,12 +32,19 @@ export function generateRuleset(
   lines.push(`  }`);
   lines.push(``);
   lines.push(`  chain forward {`);
-  lines.push(`    type filter hook forward priority filter; policy drop;`);
+  // policy accept, not drop: this hook is global (also sees Docker's own
+  // bridged inter-container traffic via bridge-nf-call-iptables), so the
+  // walled garden must be an explicit per-VLAN drop below, never a
+  // host-wide default-drop policy.
+  lines.push(`    type filter hook forward priority filter; policy accept;`);
   lines.push(`    ct state established,related accept`);
   for (const r of routerVlans) {
     lines.push(
       `    iifname "${r.vlanInterface}" oifname "${wanInterface}" ether saddr @authorized_macs accept`,
     );
+  }
+  for (const r of routerVlans) {
+    lines.push(`    iifname "${r.vlanInterface}" drop`);
   }
   lines.push(`  }`);
   lines.push(``);
@@ -59,7 +66,7 @@ export function generateRuleset(
   lines.push(`    type nat hook prerouting priority dstnat; policy accept;`);
   for (const r of routerVlans) {
     lines.push(
-      `    iifname "${r.vlanInterface}" tcp dport 80 ether saddr != @authorized_macs dnat to ${r.gatewayIp}:${portalPort}`,
+      `    iifname "${r.vlanInterface}" tcp dport 80 ether saddr != @authorized_macs dnat ip to ${r.gatewayIp}:${portalPort}`,
     );
   }
   lines.push(`  }`);

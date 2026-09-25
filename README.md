@@ -47,7 +47,10 @@ Then:
    `docker compose -f docker/docker-compose.yml up -d --build`.
 3. Add your routers in the dashboard (Routers page), note their IDs, then
    set `ROUTER_VLANS` in `apps/network-agent/.env` (format:
-   `parentIface:vlanId:routerId`, comma-separated) and
+   `parentIface:vlanId:routerId`, comma-separated). For a normal consumer
+   router without VLAN support, set `ROUTER_LANS` instead (format:
+   `parentIface:subnetId:routerId`), disable DHCP on that router, and connect
+   the gateway to one of its LAN ports. Then
    `systemctl restart netcam-network-agent`.
 4. Edit packages/pricing on the Packages page.
 5. Pick your active output channel (which physical port is live) on the

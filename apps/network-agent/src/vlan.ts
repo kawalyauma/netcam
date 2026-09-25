@@ -6,12 +6,19 @@ export async function ensureVlanInterface(r: RouterVlanConfig): Promise<void> {
   const parent = assertValidInterface(r.parentInterface);
   const iface = assertValidInterface(r.vlanInterface);
 
+  // Consumer routers commonly have no VLAN support. In that mode the
+  // physical interface itself is the routed LAN interface.
+  if (r.vlanId === null) {
+    await run("ip", ["link", "show", parent]);
+    await run("ip", ["link", "set", parent, "up"]);
+  }
+
   const exists = await run("ip", ["link", "show", iface]).then(
     () => true,
     () => false,
   );
 
-  if (!exists) {
+  if (!exists && r.vlanId !== null) {
     await run("ip", ["link", "add", "link", parent, "name", iface, "type", "vlan", "id", String(r.vlanId)]);
   }
 

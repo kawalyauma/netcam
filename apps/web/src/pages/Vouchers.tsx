@@ -39,8 +39,7 @@ export default function Vouchers() {
   }
 
   async function suspend(id: string) {
-    const reason = window.prompt("Reason for suspending this voucher?") ?? "manual suspension";
-    await api.patch(`/vouchers/${id}/suspend`, { reason });
+    await api.patch(`/vouchers/${id}/suspend`, { reason: "manual suspension" });
     load();
   }
 

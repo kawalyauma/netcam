@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, Matches } from "class-validator";
+import { IsInt, IsOptional, IsString, IsUUID, Matches } from "class-validator";
 
 const MAC_REGEX = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
 
@@ -24,6 +24,10 @@ export class PortalRedeemDto {
   @IsOptional()
   @IsInt()
   routerVlanId?: number;
+
+  @IsOptional()
+  @IsUUID()
+  routerId?: string;
 
   @IsOptional()
   @IsString()
