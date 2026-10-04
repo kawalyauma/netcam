@@ -116,7 +116,7 @@ export class RoutersService {
     });
   }
 
-  private deriveStatus(lastSeenAt: Date | null, now: number): RouterStatus {
+  deriveStatus(lastSeenAt: Date | null, now: number): RouterStatus {
     if (!lastSeenAt) return RouterStatus.UNKNOWN;
     return now - lastSeenAt.getTime() <= ONLINE_WINDOW_MS ? RouterStatus.ONLINE : RouterStatus.OFFLINE;
   }

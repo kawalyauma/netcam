@@ -15,6 +15,7 @@ function RouterTree({ node, depth, onSelect }: { node: RouterNode; depth: number
           {node.status}
         </Badge>
         {node.vlanId && <span className="text-xs text-slate-400">VLAN {node.vlanId}</span>}
+        {node.ipAddress && <span className="text-xs text-slate-400 font-mono">{node.ipAddress}</span>}
       </button>
       {node.children?.map((child) => <RouterTree key={child.id} node={child} depth={depth + 1} onSelect={onSelect} />)}
     </div>
@@ -24,6 +25,7 @@ function RouterTree({ node, depth, onSelect }: { node: RouterNode; depth: number
 const emptyForm = {
   name: "",
   macAddress: "",
+  ipAddress: "",
   model: "",
   location: "",
   vlanId: "",
@@ -41,6 +43,9 @@ export default function Routers() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [ipDraft, setIpDraft] = useState("");
+  const [ipError, setIpError] = useState<string | null>(null);
+  const selected = flatRouters.find((r) => r.id === selectedId) ?? null;
   const [activeUsers, setActiveUsers] = useState<Array<{ id: string; device: { macAddress: string }; voucher: { code: string } }>>([]);
 
   async function load() {
@@ -60,14 +65,29 @@ export default function Routers() {
 
   useEffect(() => {
     if (!selectedId) return;
+    setIpDraft(flatRouters.find((r) => r.id === selectedId)?.ipAddress ?? "");
+    setIpError(null);
     api.get<typeof activeUsers>(`/routers/${selectedId}/active-users`).then(setActiveUsers);
   }, [selectedId]);
+
+  async function saveIp() {
+    if (!selectedId) return;
+    try {
+      // An empty string clears it; the API validates anything else as IPv4.
+      await api.patch(`/routers/${selectedId}`, { ipAddress: ipDraft.trim() || null });
+      setIpError(null);
+      load();
+    } catch (err) {
+      setIpError((err as Error).message);
+    }
+  }
 
   async function create() {
     if (!form.name) return;
     await api.post("/routers", {
       name: form.name,
       macAddress: form.macAddress || undefined,
+      ipAddress: form.ipAddress || undefined,
       model: form.model || undefined,
       location: form.location || undefined,
       vlanId: form.vlanId ? Number(form.vlanId) : undefined,
@@ -95,6 +115,7 @@ export default function Routers() {
           <div className="grid grid-cols-3 gap-3 mb-3">
             <input className="border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             <input className="border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="MAC address" value={form.macAddress} onChange={(e) => setForm({ ...form, macAddress: e.target.value })} />
+            <input className="border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Management IP (e.g. 10.50.10.2)" value={form.ipAddress} onChange={(e) => setForm({ ...form, ipAddress: e.target.value })} />
             <input className="border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Model" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} />
             <input className="border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
             <input className="border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="VLAN ID" value={form.vlanId} onChange={(e) => setForm({ ...form, vlanId: e.target.value })} />
@@ -128,6 +149,22 @@ export default function Routers() {
         </Card>
 
         <Card className="p-4">
+          {selected && (
+            <div className="mb-4 pb-4 border-b border-slate-100">
+              <h2 className="text-sm font-semibold mb-2">{selected.name}: management IP</h2>
+              <div className="flex gap-2">
+                <input
+                  className="border border-slate-300 rounded-md px-3 py-2 text-sm font-mono flex-1"
+                  placeholder="e.g. 10.50.10.2"
+                  value={ipDraft}
+                  onChange={(e) => setIpDraft(e.target.value)}
+                />
+                <Button onClick={saveIp}>Save IP</Button>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Used to check whether this router is online on the Network page.</p>
+              {ipError && <p className="text-xs text-red-600 mt-1">{ipError}</p>}
+            </div>
+          )}
           <h2 className="text-sm font-semibold mb-3">Active users {selectedId ? "" : "(select a router)"}</h2>
           <div className="space-y-1.5">
             {activeUsers.map((s) => (

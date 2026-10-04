@@ -1,7 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
 import axios, { AxiosInstance } from "axios";
 import type {
+  BalanceResult,
   GatewayTransactionStatus,
+  InitiateWithdrawalParams,
   InitiateDepositParams,
   InitiateDepositResult,
   PaymentGateway,
@@ -81,6 +83,84 @@ export class SsentezoGateway implements PaymentGateway {
         : "Ssentezo request failed";
       this.logger.warn(errorMessage);
       return { ok: false, errorMessage };
+    }
+  }
+
+  /**
+   * POST /withdraw — sends money from the Ssentezo wallet to a mobile-money
+   * number. Same envelope and status lifecycle as /deposit; settle it via
+   * getStatus(externalReference) or the callback.
+   */
+  async initiateWithdrawal(params: InitiateWithdrawalParams): Promise<InitiateDepositResult> {
+    if (!this.isConfigured) {
+      return { ok: false, errorMessage: "Ssentezo API credentials are not configured" };
+    }
+
+    const publicBase = process.env.PUBLIC_BASE_URL?.replace(/\/$/, "");
+    const body: Record<string, unknown> = {
+      externalReference: params.externalReference,
+      amount: params.amount,
+      msisdn: params.msisdnDigits,
+      reason: params.reason,
+      currency: params.currency,
+    };
+    if (params.payerName) body.name = params.payerName;
+    if (publicBase) {
+      body.success_callback = `${publicBase}/api/payments/webhook/ssentezo`;
+      body.failure_callback = `${publicBase}/api/payments/webhook/ssentezo`;
+    }
+
+    try {
+      const res = await this.http.post("/withdraw", body);
+      if ((res.status !== 202 && res.status !== 200) || res.data?.response !== "OK") {
+        const errorMessage = extractSsentezoError(res.data, res.status);
+        this.logger.warn(`Ssentezo withdraw init failed (${res.status}): ${errorMessage}`);
+        // A 5xx may still have been processed; only a 4xx is a definite "no".
+        return { ok: false, errorMessage, uncertain: res.status >= 500 };
+      }
+      const data = res.data?.data;
+      const transactionStatus = parseTransactionStatus(data?.transactionStatus);
+      if (!transactionStatus) {
+        return { ok: false, uncertain: true, errorMessage: "Ssentezo returned an invalid transaction status" };
+      }
+      return {
+        ok: true,
+        transactionStatus,
+        providerRef: stringOrUndefined(data?.ssentezoWalletReference),
+        financialTransactionId: stringOrUndefined(data?.financialTransactionId),
+      };
+    } catch (error) {
+      const errorMessage = axios.isAxiosError(error)
+        ? `Ssentezo is unreachable: ${error.message}`
+        : "Ssentezo withdraw request failed";
+      this.logger.warn(errorMessage);
+      return { ok: false, uncertain: true, errorMessage };
+    }
+  }
+
+  /** POST /acc_balance — current wallet balance, for reconciling payouts. */
+  async getBalance(currency: string): Promise<BalanceResult> {
+    if (!this.isConfigured) {
+      return { ok: false, errorMessage: "Ssentezo API credentials are not configured" };
+    }
+    try {
+      const res = await this.http.post("/acc_balance", { currency });
+      if ((res.status !== 200 && res.status !== 202) || res.data?.response !== "OK") {
+        return { ok: false, errorMessage: extractSsentezoError(res.data, res.status) };
+      }
+      const data = res.data?.data;
+      const amount = Number(data?.amount ?? data?.balance);
+      return {
+        ok: Number.isFinite(amount),
+        amount: Number.isFinite(amount) ? amount : undefined,
+        currency: stringOrUndefined(data?.currency)?.toUpperCase() ?? currency,
+        errorMessage: Number.isFinite(amount) ? undefined : "Ssentezo returned no balance amount",
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        errorMessage: axios.isAxiosError(error) ? `Ssentezo is unreachable: ${error.message}` : "Ssentezo balance request failed",
+      };
     }
   }
 

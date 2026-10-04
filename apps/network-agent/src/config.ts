@@ -102,6 +102,25 @@ function parseRouterNetworks(): RouterVlanConfig[] {
   return networks;
 }
 
+function ipInSubnet(ip: string, network: RouterVlanConfig): boolean {
+  const prefix = network.subnetCidr.split("/")[0].split(".").slice(0, 3).join(".") + ".";
+  return ip.startsWith(prefix);
+}
+
+/**
+ * Which configured segment a device belongs to: by router ID when known,
+ * else by the /24 its IP is in, else the only segment on a single-segment
+ * box. Never fails just because an older session row has no routerId.
+ */
+export function findRouter(routerId?: string | null, ipAddress?: string | null): RouterVlanConfig | undefined {
+  const networks = config.routerVlans;
+  return (
+    (routerId ? networks.find((r) => r.routerId === routerId) : undefined) ??
+    (ipAddress ? networks.find((r) => ipInSubnet(ipAddress, r)) : undefined) ??
+    (networks.length === 1 ? networks[0] : undefined)
+  );
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 8787),
   apiUrl: process.env.NETCAM_API_URL ?? "http://127.0.0.1:3000",

@@ -26,6 +26,7 @@ export interface PortalStatus {
   voucherCode?: string;
   expiresAt?: string;
   remainingDataMb?: number;
+  pendingPaymentId?: string;
 }
 
 export const api = {

@@ -12,7 +12,11 @@ export function sampleTtls(iface: string, mac: string, packetCount: number, time
   const safeMac = assertValidMac(mac);
 
   return new Promise((resolve) => {
-    const args = ["-i", safeIface, "-c", String(packetCount), "-nn", "-v", `ether src ${safeMac} and ip`];
+    // Unicast only: multicast/broadcast discovery traffic (mDNS, SSDP, IGMP)
+    // uses fixed TTLs like 1 or 255, which would make one device look like
+    // several operating systems.
+    const filter = `ether src ${safeMac} and ip and not ip multicast and not ip broadcast`;
+    const args = ["-i", safeIface, "-c", String(packetCount), "-nn", "-v", filter];
     const proc = spawn("tcpdump", args);
     let output = "";
     const timer = setTimeout(() => proc.kill("SIGKILL"), timeoutMs);

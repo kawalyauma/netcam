@@ -32,6 +32,8 @@ export interface PortalStatusResponse {
   expiresAt?: string;
   remainingDataMb?: number;
   remainingSeconds?: number;
+  /** A mobile-money payment this device started that hasn't resolved yet. */
+  pendingPaymentId?: string;
 }
 
 export interface NetworkAgentAdmitCommand {

@@ -5,119 +5,173 @@ import { assertValidInterface, assertValidMac, run } from "./shell";
  * Per-MAC bandwidth shaping + accounting with Linux HTB.
  *
  * - Download (gateway -> client): HTB classes on egress of the router's
- *   VLAN interface, classified by `ether dst <mac>`.
- * - Upload (client -> gateway): the VLAN interface's ingress is mirrored to
- *   a dedicated `ifb` device per router (`tc ... action mirred egress
- *   redirect`), where we apply a second, symmetric set of HTB classes
- *   classified by `ether src <mac>`. This is the standard way to get real
- *   queueing (not just drop-on-excess) and per-class byte counters for
- *   upload on Linux, since ingress itself can't hold a queueing discipline.
+ *   interface, classified by `ether dst <mac>`.
+ * - Upload (client -> gateway): the interface's ingress is mirrored to a
+ *   dedicated `ifb` device per router, where a symmetric set of HTB classes
+ *   classifies by `ether src <mac>`. Ingress can't hold a queueing
+ *   discipline itself, so this is how upload gets real shaping and per-class
+ *   byte counters.
  *
- * Best-effort: validate actual throughput/accounting on real hardware —
- * NIC driver and kernel differences can affect HTB/u32 behavior.
+ * Each MAC gets one class minor ID, used for its class on both devices and
+ * as its filter priority, so removing a MAC can delete exactly its filter.
  */
 
 const ROOT_HANDLE = "1:";
-const DEFAULT_CLASS_ID = "1:999";
-let nextClassId = 10;
-const classIdByMac = new Map<string, number>();
+// tc parses class minors as hex. 0xffff is the default class for traffic
+// that matches no customer: unauthenticated clients loading the portal,
+// DNS/DHCP replies, the router's own management traffic.
+const DEFAULT_MINOR = 0xffff;
+const FIRST_MINOR = 0x10;
+const LAST_MINOR = 0xfff0;
+const DEFAULT_RATE = "2mbit";
+const DEFAULT_CEIL = "20mbit";
 
-function classIdFor(mac: string): number {
-  let id = classIdByMac.get(mac);
-  if (!id) {
-    id = nextClassId++;
-    classIdByMac.set(mac, id);
-  }
-  return id;
+const minorByMac = new Map<string, number>();
+const freeMinors: number[] = [];
+let nextMinor = FIRST_MINOR;
+
+function allocateMinor(mac: string): number {
+  const existing = minorByMac.get(mac);
+  if (existing) return existing;
+  const minor = freeMinors.pop() ?? nextMinor++;
+  if (minor > LAST_MINOR) throw new Error("No free traffic-shaping class IDs left");
+  minorByMac.set(mac, minor);
+  return minor;
 }
 
-async function ignoreIfExists(promise: Promise<unknown>): Promise<void> {
-  try {
-    await promise;
-  } catch (err) {
-    if (!/File exists|Exclusivity flag on/i.test((err as Error).message)) throw err;
-  }
+function classId(minor: number): string {
+  return `1:${minor.toString(16)}`;
 }
 
-async function ensureHtbRoot(iface: string): Promise<void> {
-  await ignoreIfExists(
-    run("tc", ["qdisc", "add", "dev", iface, "root", "handle", ROOT_HANDLE, "htb", "default", "999"]),
-  );
-  await ignoreIfExists(
-    run("tc", [
-      "class", "add", "dev", iface, "parent", ROOT_HANDLE, "classid", DEFAULT_CLASS_ID,
-      "htb", "rate", "512kbit", "ceil", "1mbit",
-    ]),
-  );
+/**
+ * HTB's computed default burst is tiny (~1.6 KB), which keeps a class well
+ * below its configured rate. ~20 ms worth of the rate lets it actually
+ * reach the speed the customer paid for.
+ */
+function burstFor(kbps: number): string {
+  const bytes = Math.max(16 * 1024, Math.round(((kbps * 1000) / 8) * 0.02));
+  return `${Math.ceil(bytes / 1024)}k`;
 }
 
-/** Sets up the download HTB root on the VLAN interface and the ifb mirror + HTB root for upload. */
+/**
+ * fq_codel inside each class keeps one customer's big download from
+ * queueing ahead of their own calls and page loads (bufferbloat), which is
+ * most of what makes a shared hotspot feel slow.
+ */
+async function addFairQueue(iface: string, parent: string, handle: string): Promise<void> {
+  await run("tc", ["qdisc", "replace", "dev", iface, "parent", parent, "handle", `${handle}:`, "fq_codel"]).catch((err) => {
+    console.warn(`fq_codel on ${iface} ${parent} failed: ${(err as Error).message}`);
+  });
+}
+
+async function resetRoot(iface: string): Promise<void> {
+  await run("tc", ["qdisc", "del", "dev", iface, "root"]).catch(() => undefined);
+  await run("tc", ["qdisc", "add", "dev", iface, "root", "handle", ROOT_HANDLE, "htb", "default", DEFAULT_MINOR.toString(16)]);
+  const burst = burstFor(20_000);
+  await run("tc", [
+    "class", "add", "dev", iface, "parent", ROOT_HANDLE, "classid", classId(DEFAULT_MINOR),
+    "htb", "rate", DEFAULT_RATE, "ceil", DEFAULT_CEIL, "burst", burst, "cburst", burst,
+  ]);
+  // Not "ffff:" — that handle is the ingress qdisc on router interfaces.
+  await addFairQueue(iface, classId(DEFAULT_MINOR), "fffe");
+}
+
+/**
+ * Rebuilds shaping for a router from scratch. Called at bootstrap, right
+ * before every session is re-admitted, so classes and filters left over from
+ * a previous agent run never shadow the ones created now.
+ */
 export async function ensureShapingForRouter(r: RouterVlanConfig): Promise<void> {
-  const vlanIface = assertValidInterface(r.vlanInterface);
+  const iface = assertValidInterface(r.vlanInterface);
   const ifbIface = assertValidInterface(r.ifbInterface);
 
-  await ignoreIfExists(run("ip", ["link", "add", ifbIface, "type", "ifb"]));
+  await run("ip", ["link", "add", ifbIface, "type", "ifb"]).catch(() => undefined);
   await run("ip", ["link", "set", ifbIface, "up"]);
 
-  await ensureHtbRoot(vlanIface);
-  await ensureHtbRoot(ifbIface);
+  await resetRoot(iface);
+  await resetRoot(ifbIface);
 
-  await ignoreIfExists(run("tc", ["qdisc", "add", "dev", vlanIface, "handle", "ffff:", "ingress"]));
-  await ignoreIfExists(
-    run("tc", [
-      "filter", "add", "dev", vlanIface, "parent", "ffff:", "protocol", "all", "u32",
-      "match", "u32", "0", "0",
-      "action", "mirred", "egress", "redirect", "dev", ifbIface,
-    ]),
-  );
+  await run("tc", ["qdisc", "del", "dev", iface, "ingress"]).catch(() => undefined);
+  await run("tc", ["qdisc", "add", "dev", iface, "handle", "ffff:", "ingress"]);
+  await run("tc", [
+    "filter", "add", "dev", iface, "parent", "ffff:", "protocol", "all", "u32",
+    "match", "u32", "0", "0",
+    "action", "mirred", "egress", "redirect", "dev", ifbIface,
+  ]);
+
+  for (const minor of minorByMac.values()) freeMinors.push(minor);
+  minorByMac.clear();
 }
 
-async function addClassAndFilter(
+async function upsertClassAndFilter(
   iface: string,
-  classid: string,
+  minor: number,
   kbps: number,
   matchDirection: "dst" | "src",
   mac: string,
+  hadClass: boolean,
 ): Promise<void> {
-  await ignoreIfExists(
-    run("tc", [
-      "class", "add", "dev", iface, "parent", ROOT_HANDLE, "classid", classid,
-      "htb", "rate", `${kbps}kbit`, "ceil", `${kbps}kbit`,
-    ]),
-  );
-  await ignoreIfExists(
-    run("tc", [
-      "filter", "add", "dev", iface, "parent", ROOT_HANDLE, "protocol", "all", "prio", "1",
-      "u32", "match", "ether", matchDirection, mac, "flowid", classid,
-    ]),
-  );
+  const rate = `${Math.max(8, Math.round(kbps))}kbit`;
+  const burst = burstFor(kbps);
+  // `replace` updates the rate in place and keeps the byte counters.
+  await run("tc", [
+    "class", "replace", "dev", iface, "parent", ROOT_HANDLE, "classid", classId(minor),
+    "htb", "rate", rate, "ceil", rate, "burst", burst, "cburst", burst,
+  ]);
+  await addFairQueue(iface, classId(minor), minor.toString(16));
+  if (hadClass) return;
+  await run("tc", ["filter", "del", "dev", iface, "parent", ROOT_HANDLE, "prio", String(minor)]).catch(() => undefined);
+  await run("tc", [
+    "filter", "add", "dev", iface, "parent", ROOT_HANDLE, "protocol", "all", "prio", String(minor),
+    "u32", "match", "ether", matchDirection, mac, "flowid", classId(minor),
+  ]);
 }
 
-export async function applyShapingForMac(r: RouterVlanConfig, mac: string, downKbps: number, upKbps: number): Promise<void> {
-  const safeMac = assertValidMac(mac);
-  const classId = classIdFor(safeMac);
-  const classid = `1:${classId}`;
+/** Returns true when the MAC already had a class, i.e. its byte counters carried over. */
+export async function applyShapingForMac(r: RouterVlanConfig, mac: string, downKbps: number, upKbps: number): Promise<boolean> {
+  const safeMac = assertValidMac(mac).toUpperCase();
+  const hadClass = minorByMac.has(safeMac);
+  const minor = allocateMinor(safeMac);
 
-  await addClassAndFilter(assertValidInterface(r.vlanInterface), classid, downKbps, "dst", safeMac);
-  await addClassAndFilter(assertValidInterface(r.ifbInterface), classid, upKbps, "src", safeMac);
+  await upsertClassAndFilter(assertValidInterface(r.vlanInterface), minor, downKbps, "dst", safeMac, hadClass);
+  await upsertClassAndFilter(assertValidInterface(r.ifbInterface), minor, upKbps, "src", safeMac, hadClass);
+  return hadClass;
 }
 
 export async function removeShapingForMac(r: RouterVlanConfig, mac: string): Promise<void> {
-  const safeMac = assertValidMac(mac);
-  const classId = classIdByMac.get(safeMac);
-  if (!classId) return;
-  const classid = `1:${classId}`;
+  const safeMac = assertValidMac(mac).toUpperCase();
+  const minor = minorByMac.get(safeMac);
+  if (!minor) return;
 
-  await run("tc", ["class", "del", "dev", assertValidInterface(r.vlanInterface), "classid", classid]).catch(() => undefined);
-  await run("tc", ["class", "del", "dev", assertValidInterface(r.ifbInterface), "classid", classid]).catch(() => undefined);
-  classIdByMac.delete(safeMac);
+  for (const iface of [assertValidInterface(r.vlanInterface), assertValidInterface(r.ifbInterface)]) {
+    await run("tc", ["filter", "del", "dev", iface, "parent", ROOT_HANDLE, "prio", String(minor)]).catch(() => undefined);
+    await run("tc", ["class", "del", "dev", iface, "classid", classId(minor)]).catch(() => undefined);
+  }
+  minorByMac.delete(safeMac);
+  freeMinors.push(minor);
 }
 
-/** Reads cumulative bytes sent through a MAC's HTB class — call for both the VLAN iface (download) and ifb iface (upload). */
+/** Cumulative bytes per MAC on one interface, from a single `tc` call. */
+export async function readAllMacBytes(iface: string): Promise<Map<string, number>> {
+  const { stdout } = await run("tc", ["-s", "class", "show", "dev", assertValidInterface(iface)]);
+  const macByMinor = new Map([...minorByMac].map(([mac, minor]) => [minor, mac]));
+  const bytes = new Map<string, number>();
+  // Each class block starts "class htb 1:1a ..." and its stats line follows: " Sent 12345 bytes ...".
+  for (const block of stdout.split(/\n(?=class )/)) {
+    const id = block.match(/^class \w+ 1:([0-9a-f]+)/);
+    const sent = block.match(/Sent (\d+) bytes/);
+    if (!id || !sent) continue;
+    const mac = macByMinor.get(parseInt(id[1], 16));
+    if (mac) bytes.set(mac, Number(sent[1]));
+  }
+  return bytes;
+}
+
+/** Cumulative bytes sent through a MAC's class — the router interface gives download, its ifb gives upload. */
 export async function readClassBytes(iface: string, mac: string): Promise<number | null> {
-  const classId = classIdByMac.get(assertValidMac(mac));
-  if (!classId) return null;
-  const { stdout } = await run("tc", ["-s", "class", "show", "dev", assertValidInterface(iface), "classid", `1:${classId}`]);
+  const minor = minorByMac.get(assertValidMac(mac).toUpperCase());
+  if (!minor) return null;
+  const { stdout } = await run("tc", ["-s", "class", "show", "dev", assertValidInterface(iface), "classid", classId(minor)]);
   const match = stdout.match(/Sent (\d+) bytes/);
   return match ? Number(match[1]) : null;
 }

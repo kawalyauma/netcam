@@ -4,9 +4,12 @@ export interface AdmittedMac {
   mac: string;
   router: RouterVlanConfig;
   sessionExpiresAt: number; // epoch ms
+  downKbps: number;
+  upKbps: number;
+  admittedAt: number; // epoch ms
   lastDownBytes: number;
   lastUpBytes: number;
 }
 
-/** In-memory registry of currently-admitted MACs. Rebuilt from nft on startup if the agent restarts (see reconcile.ts). */
+/** In-memory registry of currently-admitted MACs, rebuilt from the API on startup (see admission.ts). */
 export const admitted = new Map<string, AdmittedMac>();

@@ -1,10 +1,15 @@
-import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Param, Post, UnauthorizedException } from "@nestjs/common";
 import { Public } from "../auth/decorators/public.decorator";
 import { PortalService } from "./portal.service";
 import { PaymentsService } from "../payments/payments.service";
-import { PortalPayDto, PortalRecoverConfirmDto, PortalRecoverDto, PortalRedeemDto } from "./dto/portal.dto";
+import { PortalDeviceDto, PortalPayDto, PortalRecoverConfirmDto, PortalRecoverDto, PortalRedeemDto } from "./dto/portal.dto";
 
-/** Public-facing endpoints consumed by apps/portal (the captive portal page). */
+/**
+ * Public-facing endpoints consumed by apps/portal through the network-agent's
+ * portal proxy. Anything that acts on a MAC address requires the agent's
+ * shared secret: /api is also reachable from the internet via the admin
+ * domain, and MACs on an open WiFi are visible to anyone nearby.
+ */
 @Controller("portal")
 @Public()
 export class PortalController {
@@ -14,8 +19,12 @@ export class PortalController {
   ) {}
 
   @Post("pay")
-  pay(@Body() dto: PortalPayDto) {
-    return this.payments.initiate(dto.packageId, dto.phoneNumber);
+  pay(@Body() dto: PortalPayDto, @Headers("x-netcam-secret") secret?: string) {
+    const fromAgent = this.isAgent(secret);
+    const device = fromAgent && dto.macAddress
+      ? { macAddress: dto.macAddress, ipAddress: dto.ipAddress, routerId: dto.routerId }
+      : undefined;
+    return this.payments.initiate(dto.packageId, dto.phoneNumber, device);
   }
 
   @Get("pay/:paymentId/status")
@@ -24,13 +33,23 @@ export class PortalController {
   }
 
   @Post("redeem")
-  redeem(@Body() dto: PortalRedeemDto) {
+  redeem(@Body() dto: PortalRedeemDto, @Headers("x-netcam-secret") secret?: string) {
+    this.assertAgent(secret);
     return this.portal.redeem(dto);
   }
 
-  @Get("status")
-  status(@Query("mac") mac: string) {
-    return this.portal.status(mac);
+  /** Portal open: logs the device back in if it's entitled, and reports what it has. */
+  @Post("status")
+  status(@Body() dto: PortalDeviceDto, @Headers("x-netcam-secret") secret?: string) {
+    this.assertAgent(secret);
+    return this.portal.status(dto);
+  }
+
+  /** Called by the network-agent whenever a device takes a DHCP lease. */
+  @Post("auto-login")
+  autoLogin(@Body() dto: PortalDeviceDto, @Headers("x-netcam-secret") secret?: string) {
+    this.assertAgent(secret);
+    return this.portal.autoLogin(dto);
   }
 
   @Post("recover")
@@ -41,5 +60,13 @@ export class PortalController {
   @Post("recover/confirm")
   confirmRecover(@Body() dto: PortalRecoverConfirmDto) {
     return this.portal.confirmRecovery(dto.phoneNumber, dto.otp);
+  }
+
+  private isAgent(secret?: string) {
+    return secret === (process.env.NETWORK_AGENT_SHARED_SECRET ?? "insecure-dev-secret");
+  }
+
+  private assertAgent(secret?: string) {
+    if (!this.isAgent(secret)) throw new UnauthorizedException();
   }
 }

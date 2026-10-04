@@ -25,11 +25,17 @@ export default function Dashboard() {
   return (
     <div>
       <PageHeader title="Overview" subtitle="Live status across your hotspot" />
+      {overview && !overview.usersOnline && (
+        <p className="mb-3 text-sm text-amber-700">Live user counts are unavailable: the network agent on the box is not responding.</p>
+      )}
 
       {overview && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <StatTile label="Users online" value={overview.usersOnline ? overview.usersOnline.total : "—"} />
+          <StatTile label="Paid & browsing" value={overview.usersOnline ? overview.usersOnline.paid : "—"} />
+          <StatTile label="Waiting at sign-in page" value={overview.usersOnline ? overview.usersOnline.atPortal : "—"} />
           <StatTile label="Routers online" value={`${overview.routers.online}/${overview.routers.total}`} />
-          <StatTile label="Active sessions" value={overview.activeSessions} />
+          <StatTile label="Paid, time left" value={overview.activeSessions} />
           <StatTile label="Active vouchers" value={overview.activeVouchers} />
           <StatTile label="Today's revenue" value={`UGX ${overview.todayRevenueUgx.toLocaleString()}`} />
           <StatTile label="SMS sent today" value={overview.todaySmsSent} />

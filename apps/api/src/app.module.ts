@@ -2,7 +2,8 @@ import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { ScheduleModule } from "@nestjs/schedule";
-import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
+import { ThrottlerModule } from "@nestjs/throttler";
+import { AppThrottlerGuard } from "./common/app-throttler.guard";
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuditModule } from "./audit/audit.module";
 import { AuthModule } from "./auth/auth.module";
@@ -20,6 +21,9 @@ import { SettingsModule } from "./settings/settings.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { AdminUsersModule } from "./admin-users/admin-users.module";
 import { HealthModule } from "./health/health.module";
+import { NetworkModule } from "./network/network.module";
+import { FinanceModule } from "./finance/finance.module";
+import { UsageModule } from "./usage/usage.module";
 
 @Module({
   imports: [
@@ -43,7 +47,10 @@ import { HealthModule } from "./health/health.module";
     DashboardModule,
     AdminUsersModule,
     HealthModule,
+    NetworkModule,
+    FinanceModule,
+    UsageModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],
 })
 export class AppModule {}

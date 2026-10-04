@@ -8,6 +8,42 @@ import type { NetworkAgentAdmitCommand, NetworkAgentRevokeCommand } from "@netca
  * touches nftables/dnsmasq/tc directly — it only issues commands here, so a
  * compromised/buggy API process can't get raw root network access.
  */
+export interface AgentNetworkStatus {
+  generatedAt: string;
+  interfaces: Array<{ routerId: string; interfaceName: string; subnetCidr: string; gatewayIp: string }>;
+  devices: Array<{
+    macAddress: string;
+    ipAddress: string | null;
+    hostname: string | null;
+    interfaceName: string | null;
+    leaseExpiresAt: string | null;
+    neighborState: string | null;
+    pingMs: number | null;
+    online: boolean;
+    authorized: boolean;
+  }>;
+  routers: Array<{ id: string; ipAddress: string | null; pingMs: number | null; reachable: boolean }>;
+}
+
+export interface AgentUsageSnapshot {
+  generatedAt: string;
+  tickMs: number;
+  /** Whole-network bytes/second, oldest first. */
+  network: Array<{ t: number; down: number; up: number }>;
+  devices: Array<{
+    macAddress: string;
+    routerId: string;
+    ipAddress: string | null;
+    hostname: string | null;
+    downBps: number;
+    upBps: number;
+    totalDown: number;
+    totalUp: number;
+    history: Array<{ t: number; down: number; up: number }>;
+    apps: Array<{ app: string; down: number; up: number; downBps: number; upBps: number }>;
+  }>;
+}
+
 @Injectable()
 export class NetworkAgentBridgeService {
   private readonly logger = new Logger(NetworkAgentBridgeService.name);
@@ -20,6 +56,40 @@ export class NetworkAgentBridgeService {
 
   async revoke(command: NetworkAgentRevokeCommand): Promise<void> {
     await this.call("/revoke", command);
+  }
+
+  /** Unlike admit/revoke this must surface failures — the caller renders the result. */
+  async networkStatus(routers: Array<{ id: string; ipAddress: string | null; macAddress: string | null }>): Promise<AgentNetworkStatus> {
+    const { data } = await axios.post<AgentNetworkStatus>(
+      `${this.baseUrl}/network-status`,
+      { routers },
+      { headers: { "x-netcam-secret": this.sharedSecret }, timeout: 15_000 },
+    );
+    return data;
+  }
+
+  /** Whether a MAC answers on the network right now; null when the agent can't be asked. */
+  async isPresent(macAddress: string, ipAddress?: string | null): Promise<boolean | null> {
+    try {
+      const { data } = await axios.post<{ present: boolean }>(
+        `${this.baseUrl}/presence`,
+        { macAddress, ipAddress },
+        { headers: { "x-netcam-secret": this.sharedSecret }, timeout: 8000 },
+      );
+      return data.present;
+    } catch (err) {
+      this.logger.warn(`presence check for ${macAddress} failed: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Live per-device usage at 5-second resolution. Throws when the agent is unreachable. */
+  async usageLive(): Promise<AgentUsageSnapshot> {
+    const { data } = await axios.get<AgentUsageSnapshot>(`${this.baseUrl}/usage/live`, {
+      headers: { "x-netcam-secret": this.sharedSecret },
+      timeout: 5000,
+    });
+    return data;
   }
 
   private async call(path: string, body: unknown): Promise<void> {

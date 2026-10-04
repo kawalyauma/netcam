@@ -1,4 +1,4 @@
-import { api, type Package } from "./api";
+import { api, type Package, type PortalStatus } from "./api";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -75,6 +75,13 @@ function pollPayment(paymentId: string) {
       if (result.status === "SUCCESS" && result.voucherCode) {
         clearInterval(payPollTimer);
         setMsg("buy-msg", `Payment received! Connecting with code ${result.voucherCode}…`, "ok");
+        // The server logs this device in as soon as the payment lands; only
+        // fall back to redeeming the code if that didn't happen.
+        const status = await api.status().catch(() => ({ authorized: false }) as PortalStatus);
+        if (status.authorized) {
+          showConnected(status);
+          return;
+        }
         const redeemResult = await api.redeem(result.voucherCode);
         if (redeemResult.ok) {
           showConnected({ voucherCode: result.voucherCode });
@@ -105,6 +112,11 @@ function setupBuy() {
     setMsg("buy-msg", "Starting payment — check your phone for the Mobile Money prompt…");
     try {
       const result = await api.pay(selectedPackageId, phone);
+      setMsg(
+        "buy-msg",
+        "Enter your Mobile Money PIN on your phone. You can close this page — this device connects automatically once the payment goes through.",
+        "ok",
+      );
       pollPayment(result.paymentId);
     } catch (err) {
       setMsg("buy-msg", (err as Error).message, "error");
@@ -163,23 +175,60 @@ function setupRecover() {
   });
 }
 
+function setupReconnect() {
+  $("reconnect").addEventListener("click", async () => {
+    const btn = $("reconnect") as HTMLButtonElement;
+    btn.disabled = true;
+    try {
+      const status = await api.status();
+      if (status.authorized) {
+        showConnected(status);
+        connectedDetails.textContent += " · Reconnected";
+      } else {
+        connectedView.classList.add("hidden");
+        appView.classList.remove("hidden");
+        subtitle.textContent = "Your package has ended — buy a new one to continue";
+      }
+    } catch (err) {
+      connectedDetails.textContent = (err as Error).message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+/** Opening the portal also logs an entitled device back in (e.g. after a power cut), so this is the main entry point. */
+async function checkStatus(): Promise<PortalStatus | null> {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      return await api.status();
+    } catch {
+      subtitle.textContent = "Starting up, please wait…";
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+  }
+  return null;
+}
+
 async function init() {
   setupTabs();
   setupBuy();
   setupCode();
   setupRecover();
+  setupReconnect();
 
-  try {
-    const status = await api.status();
-    if (status.authorized) {
-      showConnected(status);
-      return;
-    }
-  } catch {
-    // fall through to the buy/code/recover screen
+  const status = await checkStatus();
+  subtitle.textContent = "Connect and start browsing";
+  if (status?.authorized) {
+    showConnected(status);
+    return;
   }
 
   appView.classList.remove("hidden");
+  if (status?.pendingPaymentId) {
+    setMsg("buy-msg", "Waiting for your Mobile Money payment to go through — you'll be connected automatically.", "ok");
+    pollPayment(status.pendingPaymentId);
+  }
   try {
     renderPackages(await api.getPackages());
   } catch {

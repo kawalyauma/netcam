@@ -37,7 +37,9 @@ export function generateRuleset(
   // walled garden must be an explicit per-VLAN drop below, never a
   // host-wide default-drop policy.
   lines.push(`    type filter hook forward priority filter; policy accept;`);
-  lines.push(`    ct state established,related accept`);
+  // Client-side checks come before the established/related shortcut, so
+  // revoking or expiring a MAC cuts its open connections (streams, calls)
+  // immediately instead of letting them run until they close.
   for (const r of routerVlans) {
     lines.push(
       `    iifname "${r.vlanInterface}" oifname "${wanInterface}" ether saddr @authorized_macs accept`,
@@ -46,6 +48,7 @@ export function generateRuleset(
   for (const r of routerVlans) {
     lines.push(`    iifname "${r.vlanInterface}" drop`);
   }
+  lines.push(`    ct state established,related accept`);
   lines.push(`  }`);
   lines.push(``);
   lines.push(`  chain input {`);

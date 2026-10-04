@@ -37,7 +37,9 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "3000:3000"
+      # Localhost only: the host network-agent and the web container's nginx
+      # reach the API internally; nothing on the upstream network needs it.
+      - "127.0.0.1:3000:3000"
 
   web:
     build:

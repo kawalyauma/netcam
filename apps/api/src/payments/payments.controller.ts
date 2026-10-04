@@ -1,15 +1,25 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
 import { Public } from "../auth/decorators/public.decorator";
 import { PaymentsService } from "./payments.service";
+import { EarningsService } from "./earnings.service";
 import { InitiatePaymentDto } from "./dto/initiate-payment.dto";
 
 @Controller("payments")
 export class PaymentsController {
-  constructor(private readonly service: PaymentsService) {}
+  constructor(
+    private readonly service: PaymentsService,
+    private readonly earnings: EarningsService,
+  ) {}
 
   @Get()
   findAll() {
     return this.service.findAll();
+  }
+
+  /** Revenue totals, daily series and per-package breakdown for the payments dashboard. */
+  @Get("earnings")
+  earningsSummary(@Query("days") days?: string) {
+    return this.earnings.summary(Number(days ?? 30));
   }
 
   @Get(":paymentId/status")

@@ -1,8 +1,9 @@
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
+import { IsBoolean, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Min } from "class-validator";
 import { PackageLimitType } from "@netcam/shared";
 
 export class CreatePackageDto {
   @IsString()
+  @IsNotEmpty()
   name!: string;
 
   @IsOptional()

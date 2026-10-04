@@ -3,11 +3,15 @@ import { useAuth } from "../lib/auth";
 
 const NAV_ITEMS = [
   { to: "/", label: "Overview", end: true },
+  { to: "/network", label: "Network (live)" },
+  { to: "/usage", label: "Usage (live)" },
   { to: "/routers", label: "Routers" },
   { to: "/output-channels", label: "Output Channels" },
   { to: "/packages", label: "Packages" },
   { to: "/vouchers", label: "Vouchers" },
   { to: "/payments", label: "Payments" },
+  { to: "/finance", label: "Income & Expenses" },
+  { to: "/withdrawals", label: "Withdrawals" },
   { to: "/customers", label: "Customers" },
   { to: "/settings", label: "Settings" },
   { to: "/admin-users", label: "Admin Users", superAdminOnly: true },

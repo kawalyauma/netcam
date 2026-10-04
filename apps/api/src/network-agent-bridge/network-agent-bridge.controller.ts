@@ -35,14 +35,22 @@ export class NetworkAgentBridgeController {
   async activeSessions(@Headers("x-netcam-secret") secret: string) {
     this.assertSecret(secret);
 
+    const now = new Date();
     const sessions = await this.prisma.session.findMany({
-      where: { endedAt: null, routerId: { not: null }, voucher: { status: VoucherStatus.ACTIVE } },
+      where: {
+        endedAt: null,
+        device: { isBlocked: false, releasedAt: null },
+        voucher: { status: VoucherStatus.ACTIVE, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+      },
       include: { device: true, voucher: { include: { package: true } } },
     });
 
+    // Sessions without a routerId (older portal builds) are still returned;
+    // the agent attributes them by IP or, on a single-segment box, by default.
     return sessions.map((s) => ({
       macAddress: s.device.macAddress,
-      routerId: s.routerId as string,
+      routerId: s.routerId,
+      ipAddress: s.ipAddress,
       downKbps: s.voucher.package.downKbps,
       upKbps: s.voucher.package.upKbps,
       sessionExpiresAt: (s.voucher.expiresAt ?? new Date(Date.now() + FALLBACK_SESSION_TTL_MS)).toISOString(),

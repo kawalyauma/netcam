@@ -1,12 +1,20 @@
-import { Injectable } from "@nestjs/common";
-import { PaymentStatus, VoucherStatus } from "@netcam/shared";
+import { Injectable, Logger } from "@nestjs/common";
+import { VoucherStatus } from "@netcam/shared";
 import { PrismaService } from "../prisma/prisma.service";
+import { NetworkService } from "../network/network.service";
+import { EarningsService } from "../payments/earnings.service";
 
 const ONLINE_WINDOW_MS = 3 * 60 * 1000;
 
 @Injectable()
 export class DashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(DashboardService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly network: NetworkService,
+    private readonly earnings: EarningsService,
+  ) {}
 
   async overview() {
     const now = new Date();
@@ -18,27 +26,35 @@ export class DashboardService {
       onlineRouters,
       activeSessions,
       activeVouchers,
-      todayRevenue,
+      todayRevenueUgx,
       todaySmsSent,
       recentAnomalies,
     ] = await Promise.all([
       this.prisma.router.count(),
       this.prisma.router.count({ where: { lastSeenAt: { gte: onlineCutoff } } }),
-      this.prisma.session.count({ where: { endedAt: null } }),
+      this.prisma.session.count({ where: { endedAt: null, voucher: { status: VoucherStatus.ACTIVE } } }),
       this.prisma.voucher.count({ where: { status: VoucherStatus.ACTIVE } }),
-      this.prisma.payment.aggregate({
-        where: { status: PaymentStatus.SUCCESS, completedAt: { gte: todayStart } },
-        _sum: { amountUgx: true },
-      }),
+      // Mobile money + printed vouchers sold for cash, by local calendar day.
+      this.earnings.todayUgx(),
       this.prisma.smsLog.count({ where: { createdAt: { gte: todayStart } } }),
-      this.prisma.session.count({ where: { ttlAnomalyScore: { gte: 0.5 }, endedAt: null } }),
+      this.prisma.session.count({ where: { ttlAnomalyScore: { gte: 0.5 }, endedAt: null, voucher: { status: VoucherStatus.ACTIVE } } }),
     ]);
+
+    // Devices actually on the WiFi right now (paid or waiting at the portal),
+    // from the live network scan. Null when the network agent is unreachable.
+    const live = await this.network.live().catch((err) => {
+      this.logger.warn(`live network scan failed: ${(err as Error).message}`);
+      return null;
+    });
 
     return {
       routers: { total: totalRouters, online: onlineRouters, offline: totalRouters - onlineRouters },
       activeSessions,
+      usersOnline: live
+        ? { total: live.summary.devicesOnline, paid: live.summary.devicesPaid, atPortal: live.summary.devicesBlocked }
+        : null,
       activeVouchers,
-      todayRevenueUgx: todayRevenue._sum.amountUgx ?? 0,
+      todayRevenueUgx,
       todaySmsSent,
       suspectedResharing: recentAnomalies,
       generatedAt: now.toISOString(),
@@ -52,7 +68,7 @@ export class DashboardService {
     });
     const counts = await this.prisma.session.groupBy({
       by: ["routerId"],
-      where: { endedAt: null },
+      where: { endedAt: null, voucher: { status: VoucherStatus.ACTIVE } },
       _count: { _all: true },
     });
     const countByRouter = new Map(counts.map((c) => [c.routerId, c._count._all]));

@@ -23,27 +23,48 @@ export async function sendHeartbeat(routerId: string, vlanId: number, iface: str
 
 export interface ActiveSessionRecord {
   macAddress: string;
-  routerId: string;
+  routerId: string | null;
+  ipAddress: string | null;
   downKbps: number;
   upKbps: number;
   sessionExpiresAt: string;
 }
 
-/** Fetched once on startup so a restarted agent re-admits everyone the API still considers active (see network-agent-bridge.controller.ts). */
+/**
+ * Throws when the API can't be reached. An empty list would mean "nobody is
+ * entitled", which is wrong right after a reboot when the API container
+ * simply isn't up yet — callers must retry instead.
+ */
 export async function fetchActiveSessions(): Promise<ActiveSessionRecord[]> {
-  try {
-    const { data } = await apiClient.get<ActiveSessionRecord[]>("/api/network-agent/active-sessions");
-    return data;
-  } catch (err) {
-    console.warn(`fetching active sessions for reconciliation failed: ${(err as Error).message}`);
-    return [];
-  }
+  const { data } = await apiClient.get<ActiveSessionRecord[]>("/api/network-agent/active-sessions");
+  return data;
 }
 
-export async function sendTrafficReport(
+/** Asks the API to log in a device that just took a DHCP lease, if it's entitled. The API admits it via /admit. */
+export async function requestAutoLogin(
+  macAddress: string,
+  ipAddress: string,
   routerId: string,
-  samples: Array<{ macAddress: string; bytesUp: number; bytesDown: number; observedTtls?: number[] }>,
-) {
+  hostname?: string,
+): Promise<boolean> {
+  const { data } = await apiClient.post<{ authorized: boolean }>(
+    "/api/portal/auto-login",
+    { macAddress, ipAddress, routerId, hostname },
+  );
+  return data.authorized;
+}
+
+export interface TrafficSample {
+  macAddress: string;
+  bytesUp: number;
+  bytesDown: number;
+  observedTtls?: number[];
+  ipAddress?: string;
+  hostname?: string;
+  apps?: Array<{ app: string; bytesUp: number; bytesDown: number }>;
+}
+
+export async function sendTrafficReport(routerId: string, samples: TrafficSample[]) {
   if (samples.length === 0) return;
   await apiClient.post("/api/sessions/traffic-report", { routerId, samples }).catch((err) => {
     console.warn(`traffic report to API failed: ${(err as Error).message}`);

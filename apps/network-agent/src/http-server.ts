@@ -1,9 +1,11 @@
 import express from "express";
 import type { NetworkAgentAdmitCommand, NetworkAgentRevokeCommand } from "@netcam/shared";
 import { config } from "./config";
-import * as nft from "./nft";
-import * as tc from "./tc";
 import { admitted } from "./state";
+import { admitDevice, revokeDevice } from "./admission";
+import { collectNetworkStatus, type RouterProbe } from "./network-status";
+import { usageSnapshot } from "./usage";
+import { isPresent } from "./arp";
 
 export function createHttpServer() {
   const app = express();
@@ -20,26 +22,13 @@ export function createHttpServer() {
   app.post("/admit", async (req, res) => {
     const body = req.body as NetworkAgentAdmitCommand;
     try {
-      const router = config.routerVlans.find((r) => r.routerId === body.routerId);
-      if (!router) {
-        res.status(400).json({ ok: false, error: `Unknown routerId ${body.routerId} (not in ROUTER_VLANS or ROUTER_LANS)` });
+      // Forced: the API only calls this when it wants the device online now
+      // (login, payment, portal open), so always rewrite the firewall entry.
+      const ok = await admitDevice(body, true);
+      if (!ok) {
+        res.status(400).json({ ok: false, error: `No configured router segment for routerId "${body.routerId}" / IP ${body.ipAddress}` });
         return;
       }
-
-      const expiresAt = new Date(body.sessionExpiresAt).getTime();
-      const timeoutSeconds = Math.max(60, Math.ceil((expiresAt - Date.now()) / 1000));
-
-      await nft.admitMac(body.macAddress, timeoutSeconds);
-      await tc.applyShapingForMac(router, body.macAddress, body.downKbps, body.upKbps);
-
-      admitted.set(body.macAddress.toUpperCase(), {
-        mac: body.macAddress.toUpperCase(),
-        router,
-        sessionExpiresAt: expiresAt,
-        lastDownBytes: 0,
-        lastUpBytes: 0,
-      });
-
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ ok: false, error: (err as Error).message });
@@ -49,19 +38,33 @@ export function createHttpServer() {
   app.post("/revoke", async (req, res) => {
     const body = req.body as NetworkAgentRevokeCommand;
     try {
-      const entry = admitted.get(body.macAddress.toUpperCase());
-      await nft.revokeMac(body.macAddress).catch(() => undefined);
-      if (entry) {
-        await tc.removeShapingForMac(entry.router, body.macAddress).catch(() => undefined);
-      }
-      admitted.delete(body.macAddress.toUpperCase());
+      await revokeDevice(body.macAddress);
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ ok: false, error: (err as Error).message });
     }
   });
 
-  app.get("/healthz", (_req, res) => res.json({ ok: true, admittedCount: admitted.size }));
+  app.post("/network-status", async (req, res) => {
+    try {
+      const routers = Array.isArray(req.body?.routers) ? (req.body.routers as RouterProbe[]) : [];
+      res.json(await collectNetworkStatus(routers));
+    } catch (err) {
+      res.status(500).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  app.post("/presence", async (req, res) => {
+    try {
+      res.json({ present: await isPresent(String(req.body?.macAddress ?? ""), req.body?.ipAddress ?? null) });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  app.get("/usage/live",(_req, res) => res.json(usageSnapshot()));
+
+  app.get("/healthz",(_req, res) => res.json({ ok: true, admittedCount: admitted.size }));
 
   return app;
 }

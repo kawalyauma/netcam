@@ -33,7 +33,7 @@ export class PackagesController {
     return this.service.update(id, dto);
   }
 
-  @Roles(AdminRole.SUPER_ADMIN)
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.OPERATOR)
   @Delete(":id")
   remove(@Param("id") id: string) {
     return this.service.remove(id);

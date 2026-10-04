@@ -40,6 +40,13 @@ export class AuthService {
     return bcrypt.hash(plain, 10);
   }
 
+  /** Step-up check before sensitive actions (moving money): re-verifies the admin's password. */
+  async verifyPassword(adminId: string, password: string): Promise<boolean> {
+    const admin = await this.prisma.adminUser.findUnique({ where: { id: adminId } });
+    if (!admin || !admin.isActive) return false;
+    return bcrypt.compare(password, admin.passwordHash);
+  }
+
   async changePassword(adminId: string, currentPassword: string, newPassword: string): Promise<void> {
     const admin = await this.prisma.adminUser.findUnique({ where: { id: adminId } });
     if (!admin) throw new UnauthorizedException();

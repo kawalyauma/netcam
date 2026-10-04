@@ -21,6 +21,12 @@ describe("generateRuleset", () => {
     expect(ruleset).toContain("policy accept;");
   });
 
+  it("checks client traffic before accepting established connections, so revoking cuts open streams", () => {
+    const ruleset = generateRuleset("wlan0", [router], 8080, 8787);
+    const forward = ruleset.slice(ruleset.indexOf("chain forward"), ruleset.indexOf("chain input"));
+    expect(forward.indexOf('iifname "eth0.10" drop')).toBeLessThan(forward.indexOf("ct state established,related accept"));
+  });
+
   it("DNATs unauthorized port-80 traffic to the portal on that router's gateway IP", () => {
     const ruleset = generateRuleset("wlan0", [router], 8080, 8787);
     expect(ruleset).toContain(

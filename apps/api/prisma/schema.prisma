@@ -24,6 +24,10 @@ model AdminUser {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   auditLogs    AuditLog[]
+
+  withdrawalsRequested Withdrawal[]  @relation("WithdrawalRequestedBy")
+  withdrawalsReviewed  Withdrawal[]  @relation("WithdrawalReviewedBy")
+  ledgerEntries        LedgerEntry[] @relation("LedgerEntryCreatedBy")
 }
 
 enum OutputChannelType {
@@ -61,6 +65,8 @@ model Router {
   id              String        @id @default(uuid())
   name            String
   macAddress      String?       @unique
+  /// Management IP, used to probe chained routers that share the root's flat LAN.
+  ipAddress       String?
   model           String?
   location        String?
   status          RouterStatus  @default(UNKNOWN)
@@ -161,7 +167,13 @@ model Device {
   firstSeenAt  DateTime  @default(now())
   lastSeenAt   DateTime  @default(now())
   userAgent    String?
+  /// DHCP hostname the device announced (e.g. "TECNO-POP-5-Pro").
+  hostname     String?
   isBlocked    Boolean   @default(false)
+  /// Set when the device's slot was handed to a newer device on the same
+  /// voucher (e.g. the phone re-randomized its MAC). Doesn't count toward
+  /// the device limit and is never auto-logged-in.
+  releasedAt   DateTime?
   sessions     Session[]
 
   @@unique([voucherId, macAddress])
@@ -188,6 +200,22 @@ model Session {
 
   @@index([voucherId])
   @@index([routerId])
+}
+
+/// Data used per device per app per hour, for the Usage page's history
+/// charts. Apps are recognised from DNS lookups (see the network-agent's
+/// app-catalog); traffic it can't place is "Other".
+model UsageHourly {
+  hour       DateTime
+  macAddress String
+  app        String
+  bytesDown  BigInt   @default(0)
+  bytesUp    BigInt   @default(0)
+  voucherId  String?
+
+  @@id([hour, macAddress, app])
+  @@index([hour])
+  @@index([macAddress, hour])
 }
 
 /// Phone-number identity, used for the "I lost my voucher" recovery flow
@@ -230,6 +258,13 @@ model Payment {
   voucherId    String?  @unique
   voucher      Voucher? @relation(fields: [voucherId], references: [id])
 
+  /// The WiFi device that started the payment from the captive portal
+  /// (resolved server-side from ARP). Lets a successful payment log that
+  /// device in even if the customer closed the portal while paying.
+  macAddress   String?
+  ipAddress    String?
+  routerId     String?
+
   rawRequest   Json?
   rawWebhook   Json?
   failureReason String?
@@ -240,6 +275,7 @@ model Payment {
   smsLogs SmsLog[]
 
   @@index([status])
+  @@index([macAddress])
 }
 
 enum SmsProviderName {
@@ -289,4 +325,81 @@ model Setting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+enum WithdrawalStatus {
+  REQUESTED   // waiting for a super admin to approve
+  PROCESSING  // sent to Ssentezo, waiting for the mobile-money network
+  SUCCESS
+  FAILED
+  REJECTED
+  CANCELLED
+}
+
+/// Payout of mobile-money earnings from the Ssentezo wallet to a phone.
+/// The fee is charged on top: the recipient gets amountUgx, the available
+/// balance is reduced by amountUgx + feeUgx while REQUESTED/PROCESSING/SUCCESS.
+model Withdrawal {
+  id            String           @id @default(uuid())
+  amountUgx     Int
+  feeUgx        Int
+  phoneNumber   String           // +256XXXXXXXXX
+  recipientName String?
+  note          String?
+  status        WithdrawalStatus @default(REQUESTED)
+
+  requestedById String
+  requestedBy   AdminUser  @relation("WithdrawalRequestedBy", fields: [requestedById], references: [id])
+  reviewedById  String?
+  reviewedBy    AdminUser? @relation("WithdrawalReviewedBy", fields: [reviewedById], references: [id])
+  reviewNote    String?
+
+  providerRef            String?
+  financialTransactionId String?
+  failureReason          String?
+  rawResponse            Json?
+
+  createdAt   DateTime  @default(now())
+  reviewedAt  DateTime?
+  sentAt      DateTime?
+  completedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum LedgerEntryType {
+  INCOME
+  EXPENSE
+}
+
+enum LedgerPaymentMethod {
+  CASH
+  MOBILE_MONEY
+  BANK
+  OTHER
+}
+
+/// Manually recorded money in/out (rent, power, internet bundles, cash sales
+/// outside the system...). Portal sales and withdrawal fees are NOT stored
+/// here; the finance summary derives them from Payment/Voucher/Withdrawal.
+model LedgerEntry {
+  id            String              @id @default(uuid())
+  type          LedgerEntryType
+  category      String
+  amountUgx     Int
+  occurredOn    DateTime            @db.Date
+  description   String?
+  paymentMethod LedgerPaymentMethod @default(CASH)
+
+  createdById String
+  createdBy   AdminUser @relation("LedgerEntryCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([occurredOn])
+  @@index([type, category])
 }

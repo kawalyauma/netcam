@@ -3,11 +3,12 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { PaymentStatus } from "@netcam/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { CustomersService } from "../customers/customers.service";
-import { VouchersService } from "../vouchers/vouchers.service";
+import { VouchersService, type DeviceContext } from "../vouchers/vouchers.service";
 import { SmsService } from "../sms/sms.service";
 import { PAYMENT_GATEWAY, type PaymentGateway } from "./payment-gateway.interface";
 
 const CURRENCY = "UGX";
+const PENDING_RESUME_WINDOW_MS = 15 * 60_000;
 const MIN_SSENTEZO_AMOUNT_UGX = 500;
 const MAX_SSENTEZO_AMOUNT_UGX = 7_000_000;
 const POLL_STALE_AFTER_MS = 15_000; // don't poll a transaction until it's had a moment to leave PENDING
@@ -26,7 +27,7 @@ export class PaymentsService {
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
   ) {}
 
-  async initiate(packageId: string, rawPhone: string) {
+  async initiate(packageId: string, rawPhone: string, device?: DeviceContext) {
     const pkg = await this.prisma.package.findUnique({ where: { id: packageId } });
     if (!pkg || !pkg.isActive) throw new BadRequestException("Package not available");
     if (!Number.isInteger(pkg.priceUgx) || pkg.priceUgx < MIN_SSENTEZO_AMOUNT_UGX || pkg.priceUgx > MAX_SSENTEZO_AMOUNT_UGX) {
@@ -45,6 +46,9 @@ export class PaymentsService {
         packageId: pkg.id,
         amountUgx: pkg.priceUgx,
         status: PaymentStatus.PENDING,
+        macAddress: device?.macAddress.toUpperCase(),
+        ipAddress: device?.ipAddress,
+        routerId: device?.routerId,
       },
     });
 
@@ -86,10 +90,31 @@ export class PaymentsService {
     };
   }
 
+  /** A payment this device started recently that's still waiting on the customer's PIN. */
+  async findPendingForDevice(macAddress: string) {
+    return this.prisma.payment.findFirst({
+      where: {
+        macAddress: macAddress.toUpperCase(),
+        status: PaymentStatus.PENDING,
+        createdAt: { gte: new Date(Date.now() - PENDING_RESUME_WINDOW_MS) },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+  }
+
   /** Independently re-verifies with Ssentezo rather than trusting the webhook body — the callback endpoint has no signature/auth per their docs. */
   async handleWebhook(externalReference: string) {
     await this.reconcile(externalReference);
+    this.webhookListeners.forEach((listener) => void listener(externalReference));
   }
+
+  /** Lets other modules (withdrawals) settle their own references from the shared Ssentezo callback. */
+  onWebhook(listener: (externalReference: string) => Promise<void>) {
+    this.webhookListeners.push(listener);
+  }
+
+  private readonly webhookListeners: Array<(externalReference: string) => Promise<void>> = [];
 
   /** Polls every PENDING payment that hasn't resolved yet — the reliable default since vendor boxes usually have no public IP for callbacks. */
   @Cron(CronExpression.EVERY_30_SECONDS)
@@ -165,6 +190,19 @@ export class PaymentsService {
     } catch (error) {
       if (error instanceof PaymentAlreadyReconciledError) return;
       throw error;
+    }
+
+    // Log the paying device in right away, before the (slower) SMS, so a
+    // customer who closed the portal while entering their PIN is online the
+    // moment the money lands.
+    if (payment.macAddress) {
+      await this.vouchers
+        .autoLogin({
+          macAddress: payment.macAddress,
+          ipAddress: payment.ipAddress ?? undefined,
+          routerId: payment.routerId ?? undefined,
+        })
+        .catch((err) => this.logger.error(`Auto-login after payment ${payment.id} failed: ${(err as Error).message}`));
     }
 
     const message = `NetCam WiFi: Payment received! Your voucher code is ${voucher.code}. Use it on the WiFi login page. Data/duration: ${payment.package.name}.`;

@@ -14,3 +14,5 @@ pnpm-lock.yaml.bak
 postgres-data/
 apps/portal/dist/
 apps/web/dist/
+apps/api/.prisma-typecheck/
+apps/network-agent/dist.*/

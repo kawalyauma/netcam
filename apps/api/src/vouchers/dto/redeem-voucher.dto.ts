@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, Matches } from "class-validator";
+import { IsInt, IsOptional, IsString, Matches, MaxLength } from "class-validator";
 
 const MAC_REGEX = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
 
@@ -20,4 +20,9 @@ export class RedeemVoucherDto {
   @IsOptional()
   @IsString()
   userAgent?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  hostname?: string;
 }

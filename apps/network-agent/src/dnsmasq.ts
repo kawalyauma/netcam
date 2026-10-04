@@ -3,6 +3,7 @@ import path from "path";
 import type { RouterVlanConfig } from "./config";
 import { config } from "./config";
 import { run } from "./shell";
+import { DNS_LOG_FILE, prepareDnsLog } from "./dns-log";
 
 function subnetPrefix(cidr: string): string {
   // "10.50.10.0/24" -> "10.50.10."
@@ -10,7 +11,19 @@ function subnetPrefix(cidr: string): string {
 }
 
 export function generateDnsmasqConf(routerVlans: RouterVlanConfig[], portalPort: number): string {
-  const lines: string[] = ["# Managed by @netcam/network-agent — do not edit by hand.", ""];
+  const lines: string[] = [
+    "# Managed by @netcam/network-agent — do not edit by hand.",
+    "",
+    // The default 150-entry cache is far too small for a shared hotspot;
+    // cache hits answer instantly instead of a round trip upstream.
+    "cache-size=10000",
+    // Feeds per-app usage tracking (dns-log.ts). The agent reads and empties
+    // this file continuously; nothing is kept long-term.
+    "log-queries=extra",
+    `log-facility=${DNS_LOG_FILE}`,
+    "log-async=50",
+    "",
+  ];
   for (const r of routerVlans) {
     const prefix = subnetPrefix(r.subnetCidr);
     lines.push(`interface=${r.vlanInterface}`);
@@ -28,6 +41,7 @@ export function generateDnsmasqConf(routerVlans: RouterVlanConfig[], portalPort:
 
 export async function applyDnsmasqConfig(routerVlans: RouterVlanConfig[], portalPort: number): Promise<void> {
   if (routerVlans.length === 0) return;
+  await prepareDnsLog();
   const confPath = path.join(config.dnsmasqConfDir, "netcam-routers.conf");
   await writeFile(confPath, generateDnsmasqConf(routerVlans, portalPort), "utf8");
   await run("systemctl", ["restart", "dnsmasq"]);
@@ -38,6 +52,8 @@ export interface DhcpLease {
   ipAddress: string;
   hostname?: string;
   routerId?: string;
+  /** dnsmasq's lease expiry (epoch seconds) — changes on every new lease or renewal. */
+  expiry: string;
 }
 
 /** Parses dnsmasq's lease file and attributes each lease to a router by which /24 the IP falls in. */
@@ -56,13 +72,14 @@ export async function readLeases(routerVlans: RouterVlanConfig[]): Promise<DhcpL
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const [, mac, ip, hostname] = line.split(/\s+/);
+      const [expiry, mac, ip, hostname] = line.split(/\s+/);
       const prefix = ip ? ip.split(".").slice(0, 3).join(".") + "." : "";
       return {
         macAddress: mac?.toUpperCase(),
         ipAddress: ip,
         hostname: hostname !== "*" ? hostname : undefined,
         routerId: prefixToRouter.get(prefix),
+        expiry,
       } as DhcpLease;
     })
     .filter((lease) => lease.macAddress && lease.ipAddress);

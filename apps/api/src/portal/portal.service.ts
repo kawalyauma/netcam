@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { VoucherStatus } from "@netcam/shared";
+import { VoucherStatus, type PortalStatusResponse } from "@netcam/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { CustomersService } from "../customers/customers.service";
-import { VouchersService } from "../vouchers/vouchers.service";
+import { VouchersService, type DeviceContext } from "../vouchers/vouchers.service";
+import { PaymentsService } from "../payments/payments.service";
 import { SmsService } from "../sms/sms.service";
 import type { PortalRedeemDto } from "./dto/portal.dto";
 
@@ -26,6 +27,7 @@ export class PortalService {
     private readonly prisma: PrismaService,
     private readonly customers: CustomersService,
     private readonly vouchers: VouchersService,
+    private readonly payments: PaymentsService,
     private readonly sms: SmsService,
   ) {}
 
@@ -44,29 +46,26 @@ export class PortalService {
         macAddress: dto.macAddress,
         ipAddress: dto.ipAddress,
         userAgent: dto.userAgent,
+        hostname: dto.hostname,
       },
       router?.id,
     );
   }
 
-  async status(macAddress: string) {
-    const mac = macAddress.toUpperCase();
-    const device = await this.prisma.device.findFirst({
-      where: { macAddress: mac },
-      orderBy: { lastSeenAt: "desc" },
-      include: { voucher: { include: { package: true } } },
-    });
-    if (!device || device.voucher.status !== VoucherStatus.ACTIVE) {
-      return { authorized: false };
-    }
-    return {
-      authorized: true,
-      voucherCode: device.voucher.code,
-      expiresAt: device.voucher.expiresAt?.toISOString(),
-      remainingDataMb: device.voucher.package.dataCapMb
-        ? Math.max(0, device.voucher.package.dataCapMb - device.voucher.dataUsedMb)
-        : undefined,
-    };
+  /**
+   * Runs every time the portal opens. Showing "Connected" from the database
+   * alone isn't enough — after a reboot the firewall has forgotten everyone
+   * — so this re-admits the device whenever it's entitled.
+   */
+  async status(device: DeviceContext): Promise<PortalStatusResponse> {
+    const result = await this.vouchers.autoLogin(device);
+    if (result.authorized) return result;
+    const pending = await this.payments.findPendingForDevice(device.macAddress);
+    return { authorized: false, pendingPaymentId: pending?.id };
+  }
+
+  autoLogin(device: DeviceContext) {
+    return this.vouchers.autoLogin(device);
   }
 
   /** "I lost my voucher" — step 1: send an OTP to the phone that purchased it. */

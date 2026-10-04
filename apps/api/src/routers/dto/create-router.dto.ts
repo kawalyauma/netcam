@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, Min } from "class-validator";
+import { IsInt, IsIP, IsOptional, IsString, Min } from "class-validator";
 
 export class CreateRouterDto {
   @IsString()
@@ -7,6 +7,10 @@ export class CreateRouterDto {
   @IsOptional()
   @IsString()
   macAddress?: string;
+
+  @IsOptional()
+  @IsIP("4")
+  ipAddress?: string;
 
   @IsOptional()
   @IsString()
