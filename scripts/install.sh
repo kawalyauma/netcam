@@ -40,7 +40,7 @@ random_secret() { head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -
 if command -v apt-get >/dev/null 2>&1; then
   log "Installing system prerequisites (apt)…"
   apt-get update -y
-  apt-get install -y ca-certificates curl gnupg nftables dnsmasq iproute2 tcpdump
+  apt-get install -y ca-certificates curl gnupg nftables dnsmasq iproute2 tcpdump conntrack
 
   if ! command -v docker >/dev/null 2>&1; then
     log "Installing Docker…"
@@ -109,6 +109,8 @@ docker compose -f docker/docker-compose.yml up -d --build
 log "Installing network-agent systemd service…"
 sed "s#__REPO_ROOT__#${REPO_ROOT}#g" scripts/netcam-network-agent.service.template \
   > /etc/systemd/system/netcam-network-agent.service
+sed "s#__REPO_ROOT__#${REPO_ROOT}#g" scripts/netcam-alert@.service.template \
+  > /etc/systemd/system/netcam-alert@.service
 systemctl daemon-reload
 systemctl enable --now netcam-network-agent
 

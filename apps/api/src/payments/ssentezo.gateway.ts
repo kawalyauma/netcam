@@ -1,5 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
-import axios, { AxiosInstance } from "axios";
+import axios, { AxiosInstance, type InternalAxiosRequestConfig } from "axios";
+
+const PRE_CONNECT_ERRORS = new Set(["EAI_AGAIN", "ENOTFOUND", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH"]);
+const MAX_RETRIES = 2;
 import type {
   BalanceResult,
   GatewayTransactionStatus,
@@ -38,6 +41,19 @@ export class SsentezoGateway implements PaymentGateway {
       auth: { username: apiUser, password: apiKey },
       headers: { "Content-Type": "application/json" },
       validateStatus: () => true, // we inspect status + body.response ourselves
+    });
+
+    // The uplink's DNS (an LTE router) drops lookups now and then. Retry
+    // only errors where the request never left this box — retrying one that
+    // reached Ssentezo could prompt the customer for their PIN twice.
+    this.http.interceptors.response.use(undefined, async (error: unknown) => {
+      if (!axios.isAxiosError(error) || !error.config || !PRE_CONNECT_ERRORS.has(error.code ?? "")) throw error;
+      const config = error.config as InternalAxiosRequestConfig & { retryAttempt?: number };
+      config.retryAttempt = (config.retryAttempt ?? 0) + 1;
+      if (config.retryAttempt > MAX_RETRIES) throw error;
+      this.logger.warn(`Ssentezo ${error.code}, retrying (${config.retryAttempt}/${MAX_RETRIES})`);
+      await new Promise((resolve) => setTimeout(resolve, 1000 * config.retryAttempt!));
+      return this.http.request(config);
     });
   }
 

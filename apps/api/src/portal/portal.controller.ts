@@ -45,6 +45,13 @@ export class PortalController {
     return this.portal.status(dto);
   }
 
+  /** Launch promo: one-tap free connect from the captive portal. */
+  @Post("free-connect")
+  freeConnect(@Body() dto: PortalDeviceDto, @Headers("x-netcam-secret") secret?: string) {
+    this.assertAgent(secret);
+    return this.portal.freeConnect(dto);
+  }
+
   /** Called by the network-agent whenever a device takes a DHCP lease. */
   @Post("auto-login")
   autoLogin(@Body() dto: PortalDeviceDto, @Headers("x-netcam-secret") secret?: string) {

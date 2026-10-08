@@ -11,6 +11,7 @@ import { sendHeartbeat, sendTrafficReport, type TrafficSample } from "./api-clie
 import { revokeDevice, syncWithApi } from "./admission";
 import { startLeaseWatcher } from "./lease-watcher";
 import { drainAppUsage, startUsageCollector } from "./usage";
+import { announceStartup, startHostHealthMonitor } from "./host-health";
 import { admitted } from "./state";
 
 const PORTAL_PORT = Number(process.env.PORTAL_PORT ?? 8080);
@@ -59,6 +60,7 @@ async function runSyncLoop() {
       if (!synced || restored > 0) {
         console.log(`network-agent: synced with API — ${total} active session(s), ${restored} (re)admitted.`);
       }
+      if (!synced) void announceStartup();
       synced = true;
     } catch (err) {
       console.warn(`sync with API failed${synced ? "" : " (API not up yet?)"}: ${(err as Error).message}`);
@@ -155,6 +157,7 @@ async function main() {
   void runSyncLoop();
   startLeaseWatcher();
   startUsageCollector();
+  startHostHealthMonitor();
   startHeartbeatLoop();
   startExpirySweep();
   startTrafficAndTtlLoop();

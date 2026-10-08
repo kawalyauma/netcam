@@ -1,0 +1,14 @@
+[Unit]
+Description=NetCam Claude Code bridge (WhatsApp -> Claude Code on this PC)
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/netcam-claude-bridge.env
+ExecStart=__NODE__ __REPO_ROOT__/scripts/claude-bridge.mjs
+# docker0 (the bind address) may not exist yet right after boot.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

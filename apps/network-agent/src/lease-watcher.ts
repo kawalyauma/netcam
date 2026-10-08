@@ -3,7 +3,7 @@ import path from "path";
 import { config } from "./config";
 import { readLeases } from "./dnsmasq";
 import { admitted } from "./state";
-import { requestAutoLogin } from "./api-client";
+import { requestAutoLogin, requestFreeConnect } from "./api-client";
 
 const POLL_MS = 5_000;
 // A device that isn't entitled is only asked about again when it takes a new
@@ -36,7 +36,10 @@ async function scan(): Promise<void> {
       if (prev && prev.lease === leaseKey && now - prev.at < RECHECK_MS) continue;
 
       lastChecked.set(lease.macAddress, { lease: leaseKey, at: now });
-      await requestAutoLogin(lease.macAddress, lease.ipAddress, lease.routerId, lease.hostname).catch((err) => {
+      // Launch promo: admit everyone free on join. Otherwise only entitled
+      // (paid) devices get logged in automatically.
+      const admit = config.freeLaunch ? requestFreeConnect : requestAutoLogin;
+      await admit(lease.macAddress, lease.ipAddress, lease.routerId, lease.hostname).catch((err) => {
         console.warn(`auto-login check for ${lease.macAddress} failed: ${(err as Error).message}`);
         lastChecked.set(lease.macAddress, { lease: leaseKey, at: now - RECHECK_MS + RETRY_AFTER_ERROR_MS });
       });

@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { AlertsService } from "../alerts/alerts.service";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { Prisma, WithdrawalStatus } from "@prisma/client";
 import { AdminRole, PaymentProvider, PaymentStatus } from "@netcam/shared";
@@ -35,6 +36,7 @@ export class WithdrawalsService implements OnModuleInit {
     private readonly auth: AuthService,
     private readonly customers: CustomersService,
     private readonly payments: PaymentsService,
+    private readonly alerts: AlertsService,
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
   ) {}
 
@@ -198,6 +200,13 @@ export class WithdrawalsService implements OnModuleInit {
       metadata: { amountUgx: withdrawal.amountUgx, feeUgx: withdrawal.feeUgx, phoneNumber },
     });
 
+    void this.alerts.notify({
+      category: "FINANCE",
+      severity: "WARNING",
+      title: admin.role === AdminRole.SUPER_ADMIN ? "Withdrawal sent" : "Withdrawal awaiting approval",
+      message: `UGX ${withdrawal.amountUgx.toLocaleString("en-US")} (+ UGX ${withdrawal.feeUgx.toLocaleString("en-US")} fee) to ${phoneNumber}, requested by ${admin.email}.`,
+    });
+
     // A super admin approves their own request by making it.
     if (admin.role === AdminRole.SUPER_ADMIN) {
       return this.send(withdrawal.id, admin);
@@ -350,17 +359,30 @@ export class WithdrawalsService implements OnModuleInit {
   }
 
   private async markSucceeded(id: string, financialTransactionId?: string) {
-    await this.prisma.withdrawal.updateMany({
+    const { count } = await this.prisma.withdrawal.updateMany({
       where: { id, status: WithdrawalStatus.PROCESSING },
       data: { status: WithdrawalStatus.SUCCESS, completedAt: new Date(), failureReason: null, financialTransactionId },
     });
+    if (count) await this.alertOutcome(id, true);
   }
 
   private async markFailed(id: string, reason: string) {
-    await this.prisma.withdrawal.updateMany({
+    const { count } = await this.prisma.withdrawal.updateMany({
       where: { id, status: WithdrawalStatus.PROCESSING },
       data: { status: WithdrawalStatus.FAILED, completedAt: new Date(), failureReason: reason },
     });
+    if (count) await this.alertOutcome(id, false, reason);
+  }
+
+  private async alertOutcome(id: string, succeeded: boolean, reason?: string) {
+    const w = await this.prisma.withdrawal.findUnique({ where: { id } });
+    if (!w) return;
+    const amount = `UGX ${w.amountUgx.toLocaleString("en-US")} to ${w.phoneNumber}`;
+    void this.alerts.notify(
+      succeeded
+        ? { category: "FINANCE", severity: "INFO", title: "Withdrawal paid out", message: `${amount} was delivered.` }
+        : { category: "FINANCE", severity: "CRITICAL", title: "Withdrawal failed", message: `${amount} failed: ${reason}. The amount is back in the available balance.` },
+    );
   }
 
   // ------------------------------------------------------------ helpers

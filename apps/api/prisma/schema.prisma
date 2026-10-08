@@ -403,3 +403,38 @@ model LedgerEntry {
   @@index([occurredOn])
   @@index([type, category])
 }
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+/// Someone who gets notified. Categories empty = every category.
+model AlertRecipient {
+  id          String        @id @default(uuid())
+  name        String
+  phoneNumber String        // 2567XXXXXXXX
+  categories  String[]      @default([])
+  minSeverity AlertSeverity @default(INFO)
+  whatsapp    Boolean       @default(true)
+  sms         Boolean       @default(false) // fallback when WhatsApp fails; costs per message
+  enabled     Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+/// Every alert raised, with who it reached and how.
+model AlertEvent {
+  id         String        @id @default(uuid())
+  category   String
+  severity   AlertSeverity
+  title      String
+  message    String
+  dedupeKey  String?
+  deliveries Json?
+  createdAt  DateTime      @default(now())
+
+  @@index([createdAt])
+  @@index([dedupeKey, createdAt])
+}

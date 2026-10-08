@@ -4,7 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CustomersService } from "../customers/customers.service";
 import { VouchersService, type DeviceContext } from "../vouchers/vouchers.service";
 import { PaymentsService } from "../payments/payments.service";
-import { SmsService } from "../sms/sms.service";
+import { MessengerService } from "../whatsapp/messenger.service";
 import type { PortalRedeemDto } from "./dto/portal.dto";
 
 interface OtpChallenge {
@@ -28,7 +28,7 @@ export class PortalService {
     private readonly customers: CustomersService,
     private readonly vouchers: VouchersService,
     private readonly payments: PaymentsService,
-    private readonly sms: SmsService,
+    private readonly messenger: MessengerService,
   ) {}
 
   async redeem(dto: PortalRedeemDto) {
@@ -68,6 +68,11 @@ export class PortalService {
     return this.vouchers.autoLogin(device);
   }
 
+  /** Launch promo: connect any device for free, no voucher or payment. */
+  freeConnect(device: DeviceContext) {
+    return this.vouchers.freeConnect(device, device.routerId);
+  }
+
   /** "I lost my voucher" — step 1: send an OTP to the phone that purchased it. */
   async requestRecovery(rawPhone: string) {
     const customer = await this.customers.findByPhone(rawPhone).catch(() => null);
@@ -91,9 +96,11 @@ export class PortalService {
     this.challenges.set(key, { otp, expiresAt: Date.now() + OTP_TTL_MS });
     this.lastSentAt.set(key, Date.now());
 
-    await this.sms.sendNow({
-      toPhoneDigits: key.replace("+", ""),
-      message: `NetCam WiFi: your recovery code is ${otp}. It expires in 5 minutes.`,
+    await this.messenger.send({
+      phoneDigits: key.replace("+", ""),
+      name: customer.name,
+      subject: "Recovery code",
+      message: `Your recovery code is ${otp}. It expires in 5 minutes. Don't share it.`,
       customerId: customer.id,
     });
 

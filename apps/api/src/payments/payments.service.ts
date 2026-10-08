@@ -4,7 +4,8 @@ import { PaymentStatus } from "@netcam/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { CustomersService } from "../customers/customers.service";
 import { VouchersService, type DeviceContext } from "../vouchers/vouchers.service";
-import { SmsService } from "../sms/sms.service";
+import { MessengerService } from "../whatsapp/messenger.service";
+import { AlertsService } from "../alerts/alerts.service";
 import { PAYMENT_GATEWAY, type PaymentGateway } from "./payment-gateway.interface";
 
 const CURRENCY = "UGX";
@@ -23,7 +24,8 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private readonly customers: CustomersService,
     private readonly vouchers: VouchersService,
-    private readonly sms: SmsService,
+    private readonly messenger: MessengerService,
+    private readonly alerts: AlertsService,
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
   ) {}
 
@@ -166,6 +168,12 @@ export class PaymentsService {
         where: { id: payment.id, status: PaymentStatus.PENDING },
         data: { status: PaymentStatus.FAILED, rawWebhook: status as object },
       });
+      void this.alerts.notify({
+        category: "PAYMENTS",
+        severity: "INFO",
+        title: "Payment failed or cancelled",
+        message: `UGX ${payment.amountUgx.toLocaleString("en-US")} from ${payment.customer.phoneNumber} for ${payment.package.name} did not go through.`,
+      });
       return;
     }
 
@@ -205,13 +213,34 @@ export class PaymentsService {
         .catch((err) => this.logger.error(`Auto-login after payment ${payment.id} failed: ${(err as Error).message}`));
     }
 
-    const message = `NetCam WiFi: Payment received! Your voucher code is ${voucher.code}. Use it on the WiFi login page. Data/duration: ${payment.package.name}.`;
-    await this.sms.sendNow({
-      toPhoneDigits: payment.customer.phoneNumber.replace("+", ""),
-      message,
+    const phoneDigits = payment.customer.phoneNumber.replace("+", "");
+    const delivery = await this.messenger.send({
+      phoneDigits,
+      name: payment.customer.name,
+      subject: "Payment received",
+      message:
+        `Your WiFi code is ${voucher.code} (${payment.package.name}). ` +
+        (payment.macAddress
+          ? "The phone you paid from is connected automatically. Use the code on another device or if you get disconnected."
+          : "Enter it on the WiFi login page to connect."),
       customerId: payment.customerId,
       paymentId: payment.id,
     });
+
+    void this.alerts.notify({
+      category: "PAYMENTS",
+      severity: "INFO",
+      title: "Payment received",
+      message: `UGX ${payment.amountUgx.toLocaleString("en-US")} from +${phoneDigits} for ${payment.package.name}. Code ${voucher.code} sent by ${delivery.channel}.`,
+    });
+    if (!delivery.ok) {
+      void this.alerts.notify({
+        category: "CUSTOMERS",
+        severity: "WARNING",
+        title: "Customer didn't get their code",
+        message: `+${phoneDigits} paid UGX ${payment.amountUgx.toLocaleString("en-US")} but neither WhatsApp nor SMS reached them. Send them code ${voucher.code} manually. (${delivery.error})`,
+      });
+    }
   }
 
   findAll() {

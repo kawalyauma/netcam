@@ -5,7 +5,8 @@ import helmet from "helmet";
 import { AppModule } from "./app.module";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { cors: false });
+  // rawBody: webhook signatures (WhatsApp hub) are computed over the exact bytes.
+  const app = await NestFactory.create(AppModule, { cors: false, rawBody: true });
 
   app.use(helmet());
   app.enableCors({

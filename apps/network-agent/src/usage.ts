@@ -1,4 +1,6 @@
+import { execFile } from "child_process";
 import { readFile, writeFile } from "fs/promises";
+import { promisify } from "util";
 import { config } from "./config";
 import { admitted } from "./state";
 import { readAllMacBytes } from "./tc";
@@ -10,6 +12,28 @@ const TICK_MS = 5_000;
 const HISTORY_POINTS = 120; // 10 minutes of 5-second points
 const CONNTRACK_FILE = "/proc/net/nf_conntrack";
 const UNATTRIBUTED = "Other";
+const execFileAsync = promisify(execFile);
+
+/**
+ * The connection table with byte counters. Newer kernels no longer have
+ * /proc/net/nf_conntrack; `conntrack -L -o extended` (conntrack-tools)
+ * prints the same lines over netlink.
+ */
+async function readConntrack(): Promise<string> {
+  try {
+    return await readFile(CONNTRACK_FILE, "utf8");
+  } catch {
+    try {
+      const { stdout } = await execFileAsync("conntrack", ["-L", "-o", "extended"], {
+        timeout: 4_000,
+        maxBuffer: 64 * 1024 * 1024,
+      });
+      return stdout;
+    } catch {
+      return "";
+    }
+  }
+}
 
 /** Bytes per second over one tick. */
 export interface RatePoint {
@@ -155,7 +179,7 @@ async function tick() {
   }
 
   const seenByMac = new Map<string, Map<string, Counter>>();
-  const conntrack = await readFile(CONNTRACK_FILE, "utf8").catch(() => "");
+  const conntrack = await readConntrack();
   const live = new Set<string>();
   for (const flow of parseConntrack(conntrack)) {
     const mac = macByIp.get(flow.src);

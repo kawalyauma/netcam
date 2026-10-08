@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { PaymentStatus, VoucherStatus } from "@netcam/shared";
+import { PackageLimitType, PaymentStatus, VoucherStatus } from "@netcam/shared";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -25,6 +25,11 @@ const DEVICE_SLOT_STALE_MS = 10 * 60_000;
 const MAC_HANDOVER_WINDOW_MS = 15 * 60_000;
 // Names too common to identify one device.
 const GENERIC_HOSTNAMES = new Set(["android", "iphone", "ipad", "localhost", "unknown", "*"]);
+
+// Launch promo: the hidden, zero-price package every "Connect free" device is
+// put on. Kept isActive:false so it never shows up in the buy list.
+const FREE_LAUNCH_PACKAGE_NAME = "Free Launch";
+const FREE_LAUNCH_LABEL = "FREE-LAUNCH";
 
 export interface DeviceContext {
   macAddress: string;
@@ -197,6 +202,50 @@ export class VouchersService {
       sessionExpiresAt: expiresAt?.toISOString(),
       remainingDataMb: voucher.package.dataCapMb ? voucher.package.dataCapMb - voucher.dataUsedMb : undefined,
     };
+  }
+
+  /**
+   * Launch promo: connects any device for free. Reuses the normal voucher
+   * path (a per-device voucher on a hidden zero-price package) so Sessions,
+   * usage and per-router stats are recorded exactly as for a paid user — which
+   * is what lets us analyse behaviour later. Idempotent: a device that's
+   * already on a live free voucher is just re-admitted, not given a new one.
+   */
+  async freeConnect(ctx: DeviceContext, routerId?: string) {
+    const existing = await this.autoLogin({ ...ctx, routerId: routerId ?? ctx.routerId });
+    if (existing.authorized) {
+      return {
+        ok: true,
+        message: "Connected",
+        sessionExpiresAt: existing.expiresAt,
+        remainingDataMb: existing.remainingDataMb,
+      };
+    }
+    const pkg = await this.ensureFreeLaunchPackage();
+    const code = generateVoucherCode();
+    await this.prisma.voucher.create({ data: { code, packageId: pkg.id, batchLabel: FREE_LAUNCH_LABEL } });
+    return this.redeem(
+      { voucherCode: code, macAddress: ctx.macAddress, ipAddress: ctx.ipAddress, hostname: ctx.hostname },
+      routerId ?? ctx.routerId,
+    );
+  }
+
+  private async ensureFreeLaunchPackage() {
+    const existing = await this.prisma.package.findFirst({ where: { name: FREE_LAUNCH_PACKAGE_NAME } });
+    if (existing) return existing;
+    return this.prisma.package.create({
+      data: {
+        name: FREE_LAUNCH_PACKAGE_NAME,
+        description: "Free launch promo — unlimited for the day",
+        priceUgx: 0,
+        limitType: PackageLimitType.DURATION,
+        durationMinutes: 24 * 60,
+        downKbps: 20_000,
+        upKbps: 10_000,
+        deviceLimit: 99,
+        isActive: false,
+      },
+    });
   }
 
   /**

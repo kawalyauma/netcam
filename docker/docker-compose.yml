@@ -16,7 +16,8 @@ services:
       timeout: 5s
       retries: 10
     ports:
-      - "127.0.0.1:5432:5432"
+      # Host port is configurable for boxes already running another Postgres.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
 
   api:
     build:
@@ -36,6 +37,12 @@ services:
       SEED_ON_START: ${SEED_ON_START:-true}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # The uplink router's DNS is flaky; payments, SMS and WhatsApp all need
+    # reliable lookups, so try public resolvers first.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+      - 192.168.10.1
     ports:
       # Localhost only: the host network-agent and the web container's nginx
       # reach the API internally; nothing on the upstream network needs it.

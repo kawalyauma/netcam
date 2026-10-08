@@ -54,6 +54,20 @@ export async function requestAutoLogin(
   return data.authorized;
 }
 
+/** Launch promo: connect a just-joined device for free, no voucher or tap. The API admits it via /admit. */
+export async function requestFreeConnect(
+  macAddress: string,
+  ipAddress: string,
+  routerId: string,
+  hostname?: string,
+): Promise<boolean> {
+  const { data } = await apiClient.post<{ ok: boolean }>(
+    "/api/portal/free-connect",
+    { macAddress, ipAddress, routerId, hostname },
+  );
+  return data.ok;
+}
+
 export interface TrafficSample {
   macAddress: string;
   bytesUp: number;

@@ -22,6 +22,14 @@ export function generateDnsmasqConf(routerVlans: RouterVlanConfig[], portalPort:
     "log-queries=extra",
     `log-facility=${DNS_LOG_FILE}`,
     "log-async=50",
+    // Listen only on the hotspot interfaces below (plus loopback), so this
+    // can share the box with systemd-resolved, LXC or libvirt's own dnsmasq.
+    "bind-dynamic",
+    // This box is the only DHCP server on the hotspot. Answering renewals
+    // for leases it doesn't remember (after a reinstall or a move to new
+    // hardware) gets every phone a fresh lease at once instead of after
+    // its old one expires.
+    "dhcp-authoritative",
     "",
   ];
   for (const r of routerVlans) {

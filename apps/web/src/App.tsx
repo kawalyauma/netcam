@@ -5,6 +5,7 @@ import Dashboard from "./pages/Dashboard";
 import Routers from "./pages/Routers";
 import Network from "./pages/Network";
 import Usage from "./pages/Usage";
+import Alerts from "./pages/Alerts";
 import OutputChannels from "./pages/OutputChannels";
 import Packages from "./pages/Packages";
 import Vouchers from "./pages/Vouchers";
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/network" element={<Network />} />
         <Route path="/usage" element={<Usage />} />
+        <Route path="/alerts" element={<Alerts />} />
         <Route path="/routers" element={<Routers />} />
         <Route path="/output-channels" element={<OutputChannels />} />
         <Route path="/packages" element={<Packages />} />

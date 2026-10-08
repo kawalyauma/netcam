@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { NetworkAgentBridgeService } from "../network-agent-bridge/network-agent-bridge.service";
 import { scoreTtlAnomaly } from "./ttl-fingerprint.util";
+import { AlertsService } from "../alerts/alerts.service";
 import type { ReportTrafficDto } from "./dto/report-traffic.dto";
 
 const RESHARE_SUSPICION_THRESHOLD = 0.5;
@@ -18,6 +19,7 @@ export class SessionsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly networkAgent: NetworkAgentBridgeService,
+    private readonly alerts: AlertsService,
   ) {}
 
   findActive() {
@@ -104,6 +106,14 @@ export class SessionsService {
 
   private async flagPossibleResharing(voucherId: string, macAddress: string, score: number) {
     this.logger.warn(`Possible connection re-sharing on voucher ${voucherId} via MAC ${macAddress} (score ${score.toFixed(2)})`);
+    void this.alerts.notify({
+      category: "SECURITY",
+      severity: "WARNING",
+      title: "Possible connection sharing",
+      message: `Device ${macAddress} looks like it's sharing its connection with other devices (score ${score.toFixed(2)}). Review it on the Vouchers page; it was not cut off.`,
+      dedupeKey: `reshare:${voucherId}:${macAddress}`,
+      cooldownMinutes: 24 * 60,
+    });
     await this.audit.log({
       action: "RESHARE_SUSPECTED",
       entityType: "Voucher",

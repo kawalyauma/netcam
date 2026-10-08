@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { to: "/", label: "Overview", end: true },
   { to: "/network", label: "Network (live)" },
   { to: "/usage", label: "Usage (live)" },
+  { to: "/alerts", label: "Alerts" },
   { to: "/routers", label: "Routers" },
   { to: "/output-channels", label: "Output Channels" },
   { to: "/packages", label: "Packages" },

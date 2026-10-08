@@ -2,6 +2,8 @@
 Description=NetCam network-agent (nftables/dnsmasq/tc controller)
 After=network-online.target docker.service
 Wants=network-online.target
+# Gives up after repeated crashes -> tell someone (scripts/netcam-alert.sh).
+OnFailure=netcam-alert@%n.service
 
 [Service]
 Type=simple

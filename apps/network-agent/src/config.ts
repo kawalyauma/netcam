@@ -131,4 +131,8 @@ export const config = {
   dnsmasqLeasesFile: process.env.DNSMASQ_LEASES_FILE ?? "/var/lib/misc/dnsmasq.leases",
   ttlSampleIntervalMs: Number(process.env.TTL_SAMPLE_INTERVAL_MS ?? 60_000),
   ttlSamplePacketCount: Number(process.env.TTL_SAMPLE_PACKET_COUNT ?? 8),
+  // Launch promo: when on, every device that joins is connected free the
+  // moment it takes a lease — no portal tap. Turn off to go back to the
+  // one-tap "Connect" page (and paid vouchers).
+  freeLaunch: (process.env.FREE_LAUNCH ?? "false").toLowerCase() === "true",
 };

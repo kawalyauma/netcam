@@ -24,6 +24,8 @@ import { HealthModule } from "./health/health.module";
 import { NetworkModule } from "./network/network.module";
 import { FinanceModule } from "./finance/finance.module";
 import { UsageModule } from "./usage/usage.module";
+import { AlertsModule } from "./alerts/alerts.module";
+import { WhatsAppModule } from "./whatsapp/whatsapp.module";
 
 @Module({
   imports: [
@@ -50,6 +52,8 @@ import { UsageModule } from "./usage/usage.module";
     NetworkModule,
     FinanceModule,
     UsageModule,
+    AlertsModule,
+    WhatsAppModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],
 })

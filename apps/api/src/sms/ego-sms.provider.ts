@@ -43,8 +43,13 @@ export class EgoSmsProvider implements SmsProvider {
       }
       return { ok: true, providerRef: body.MsgFollowUpUniqueCode, cost: body.Cost };
     } catch (err) {
-      this.logger.error(`EGO SMS request error: ${(err as Error).message}`);
-      return { ok: false, error: (err as Error).message };
+      // Despite the docs, EGO answers some failures (e.g. bad credentials)
+      // with HTTP 400 — its explanation is still in the body.
+      const message = axios.isAxiosError(err)
+        ? ((err.response?.data as { Message?: string } | undefined)?.Message ?? err.message)
+        : (err as Error).message;
+      this.logger.error(`EGO SMS request error: ${message}`);
+      return { ok: false, error: message };
     }
   }
 }

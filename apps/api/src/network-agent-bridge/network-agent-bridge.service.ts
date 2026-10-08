@@ -68,6 +68,15 @@ export class NetworkAgentBridgeService {
     return data;
   }
 
+  async isHealthy(): Promise<boolean> {
+    try {
+      await axios.get(`${this.baseUrl}/healthz`, { headers: { "x-netcam-secret": this.sharedSecret }, timeout: 5000 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Whether a MAC answers on the network right now; null when the agent can't be asked. */
   async isPresent(macAddress: string, ipAddress?: string | null): Promise<boolean | null> {
     try {

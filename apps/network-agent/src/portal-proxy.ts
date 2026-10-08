@@ -101,6 +101,26 @@ export function createPortalRouter() {
     }
   });
 
+  /** Launch promo: one-tap free connect — identifies the device by ARP, same as /redeem. */
+  router.post("/free-connect", async (req, res) => {
+    const device = await deviceFor(req);
+    if (!device) {
+      res.status(400).json({ ok: false, message: "Could not identify your device on the network. Try reconnecting to WiFi and retry." });
+      return;
+    }
+    try {
+      const { data, status } = await api.post("/api/portal/free-connect", {
+        macAddress: device.macAddress,
+        ipAddress: device.ipAddress,
+        routerId: device.routerId,
+        hostname: device.hostname,
+      });
+      res.status(status).json(data);
+    } catch {
+      apiUnavailable(res);
+    }
+  });
+
   /** Also logs the device back in when it's entitled (e.g. after the box rebooted). */
   router.get("/status", async (req, res) => {
     const device = await deviceFor(req);

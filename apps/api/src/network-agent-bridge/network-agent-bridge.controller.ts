@@ -4,8 +4,38 @@ import type { NetworkAgentHeartbeat } from "@netcam/shared";
 import { Public } from "../auth/decorators/public.decorator";
 import { RoutersService } from "../routers/routers.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { AlertSeverity } from "@prisma/client";
+import { IsEnum, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from "class-validator";
+import { ALERT_CATEGORIES, AlertsService, type AlertCategory } from "../alerts/alerts.service";
 
 const FALLBACK_SESSION_TTL_MS = 24 * 60 * 60_000;
+
+class AgentAlertDto {
+  @IsIn(Object.keys(ALERT_CATEGORIES))
+  category!: AlertCategory;
+
+  @IsEnum(AlertSeverity)
+  severity!: AlertSeverity;
+
+  @IsString()
+  @MaxLength(120)
+  title!: string;
+
+  @IsString()
+  @MaxLength(1000)
+  message!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  dedupeKey?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(7 * 24 * 60)
+  cooldownMinutes?: number;
+}
 
 /** Inbound endpoints the network-agent calls (not admin-authenticated; guarded by a shared secret). */
 @Controller("network-agent")
@@ -13,7 +43,19 @@ export class NetworkAgentBridgeController {
   constructor(
     private readonly routersService: RoutersService,
     private readonly prisma: PrismaService,
+    private readonly alerts: AlertsService,
   ) {}
+
+  /** Host-level problems only the gateway can see: power, uplink, router cable, disk. */
+  @Public()
+  @Post("alert")
+  async alert(@Body() body: AgentAlertDto, @Headers("x-netcam-secret") secret: string) {
+    this.assertSecret(secret);
+    // Answer right away: delivering over WhatsApp can take longer than the
+    // agent waits, and a timeout would make it re-send the alert directly.
+    void this.alerts.notify(body);
+    return { ok: true };
+  }
 
   @Public()
   @Post("heartbeat")

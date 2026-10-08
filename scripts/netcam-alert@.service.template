@@ -1,0 +1,6 @@
+[Unit]
+Description=NetCam last-resort WhatsApp alert for %i
+
+[Service]
+Type=oneshot
+ExecStart=__REPO_ROOT__/scripts/netcam-alert.sh %i
