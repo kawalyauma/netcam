@@ -5,8 +5,12 @@
 // have context. Plain Node, no dependencies, runs as the desktop user so
 // Claude uses that user's login and home directory.
 //
+// Numbers the API marks as engine "codex" get OpenAI Codex (codex exec)
+// instead of Claude, with the same menus.
+//
 // SECURITY: whoever can call /run fully controls this PC (Claude runs with
-// --dangerously-skip-permissions). It only listens on the Docker bridge and
+// --dangerously-skip-permissions, Codex with
+// --dangerously-bypass-approvals-and-sandbox). It only listens on the Docker bridge and
 // every request must carry CLAUDE_BRIDGE_SECRET.
 
 import { createServer } from "node:http";
@@ -20,8 +24,10 @@ const HOST = process.env.CLAUDE_BRIDGE_HOST ?? "172.17.0.1";
 const PORT = Number(process.env.CLAUDE_BRIDGE_PORT ?? 8790);
 const SECRET = process.env.CLAUDE_BRIDGE_SECRET ?? "";
 const CLAUDE_BIN = process.env.CLAUDE_BIN ?? "claude";
+const CODEX_BIN = process.env.CODEX_BIN ?? "codex";
+const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), ".codex");
 const CWD = process.env.CLAUDE_CWD ?? homedir();
-const TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS ?? 20 * 60_000);
+const TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS ?? 60 * 60_000);
 // Claude in Chrome (needs the extension connected in the owner's Chrome).
 // CLAUDE_BRIDGE_CHROME=0 turns it off.
 const CHROME = process.env.CLAUDE_BRIDGE_CHROME !== "0";
@@ -42,7 +48,9 @@ if (!SECRET) {
   process.exit(1);
 }
 
-// Per WhatsApp conversation: the folder Claude works in and the session to
+const label = (engine) => (engine === "codex" ? "Codex" : "Claude");
+
+// Per WhatsApp conversation: the engine, the folder it works in and the session to
 // resume there. Older state files stored just the session id.
 function loadSessions() {
   try {
@@ -63,26 +71,78 @@ function convo(id) {
   return (sessions[id] ??= { cwd: CWD });
 }
 
+function assistantText(entry) {
+  if (entry?.message?.role !== "assistant" || !Array.isArray(entry.message.content)) return "";
+  return entry.message.content
+    .filter((part) => part?.type === "text" && typeof part.text === "string")
+    .map((part) => part.text.trim())
+    .filter((value) => value && value !== "No response requested.")
+    .join("\n\n");
+}
+
+/**
+ * Claude writes assistant messages to its JSONL transcript before the CLI
+ * prints the final JSON response. If the wrapper is terminated (commonly exit
+ * 143), recover the real text produced during this turn instead of exposing a
+ * process error to WhatsApp.
+ */
+function recoverClaudeReply(cwd, sessionId, startedAt) {
+  const dir = join(PROJECTS_DIR, projectKey(cwd));
+  const candidates = sessionId
+    ? [join(dir, `${sessionId}.jsonl`)]
+    : sessionFiles(dir)
+        .filter((file) => statSync(file).mtimeMs >= startedAt - 5_000)
+        .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  for (const file of candidates) {
+    if (!existsSync(file)) continue;
+    let entries;
+    try {
+      entries = jsonLines(readFileSync(file, "utf8"));
+    } catch {
+      continue;
+    }
+    const replies = entries.flatMap((entry) => {
+      const timestamp = Date.parse(entry?.timestamp ?? "");
+      const value = assistantText(entry);
+      return value && Number.isFinite(timestamp) && timestamp >= startedAt - 2_000 ? [value] : [];
+    });
+    if (replies.length) return { text: replies.at(-1), sessionId: basename(file, ".jsonl") };
+  }
+  return null;
+}
+
 function runClaude(prompt, cwd, sessionId) {
   const args = ["-p", prompt, "--output-format", "json", "--dangerously-skip-permissions"];
   if (CHROME) args.push("--chrome");
   args.push("--append-system-prompt", SYSTEM_PROMPT);
   if (sessionId) args.push("--resume", sessionId);
   return new Promise((resolve) => {
+    const startedAt = Date.now();
     const child = spawn(CLAUDE_BIN, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     let err = "";
+    let timedOut = false;
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (err += d));
-    const timer = setTimeout(() => child.kill("SIGTERM"), TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, TIMEOUT_MS);
     child.on("close", (code, signal) => {
       clearTimeout(timer);
-      if (signal) return resolve({ ok: false, error: `Claude was stopped after ${Math.round(TIMEOUT_MS / 60_000)} minutes.` });
       try {
         const r = JSON.parse(out);
-        resolve({ ok: !r.is_error, text: String(r.result ?? ""), sessionId: r.session_id, error: r.is_error ? r.result : undefined });
+        return resolve({ ok: !r.is_error, text: String(r.result ?? ""), sessionId: r.session_id, error: r.is_error ? r.result : undefined });
       } catch {
-        resolve({ ok: false, error: (err || out || `claude exited with code ${code}`).trim().slice(0, 500) });
+        const recovered = recoverClaudeReply(cwd, sessionId, startedAt);
+        if (recovered) return resolve({ ok: true, text: recovered.text, sessionId: recovered.sessionId, recovered: true });
+        const stopped = timedOut || signal || code === 143 || code === 137;
+        resolve({
+          ok: false,
+          error: stopped
+            ? `Claude stopped before it produced a text reply. Send “continue” to resume the same session.`
+            : (err || out || `Claude could not complete this turn (exit ${code ?? "unknown"}).`).trim().slice(-500),
+        });
       }
     });
     child.on("error", (e) => {
@@ -92,7 +152,43 @@ function runClaude(prompt, cwd, sessionId) {
   });
 }
 
-// One Claude run at a time per conversation, in arrival order.
+// Codex has no --append-system-prompt, so new sessions get the WhatsApp
+// instructions in front of the first message.
+function runCodex(prompt, cwd, sessionId) {
+  const flags = ["--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"];
+  const args = sessionId
+    ? ["exec", "resume", sessionId, ...flags, "--", prompt]
+    : ["exec", ...flags, "--", `${SYSTEM_PROMPT.replace(/Claude extension/g, "browser extension")}\n\n${prompt}`];
+  return new Promise((resolve) => {
+    const child = spawn(CODEX_BIN, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (err += d));
+    const timer = setTimeout(() => child.kill("SIGTERM"), TIMEOUT_MS);
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      if (signal) return resolve({ ok: false, error: `Codex was stopped after ${Math.round(TIMEOUT_MS / 60_000)} minutes.` });
+      let id = sessionId;
+      const replies = [];
+      let failure;
+      for (const e of jsonLines(out)) {
+        if (e.type === "thread.started") id = e.thread_id;
+        else if (e.type === "item.completed" && e.item?.type === "agent_message") replies.push(e.item.text);
+        else if (e.type === "turn.failed") failure = e.error?.message ?? "turn failed";
+        else if (e.type === "error") failure = e.message;
+      }
+      if (replies.length) return resolve({ ok: true, text: replies.at(-1), sessionId: id });
+      resolve({ ok: false, sessionId: id, error: (failure || err || out || `codex exited with code ${code}`).trim().slice(-500) });
+    });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ ok: false, error: e.message });
+    });
+  });
+}
+
+// One Claude/Codex run at a time per conversation, in arrival order.
 const queues = new Map();
 function enqueue(key, job) {
   const next = (queues.get(key) ?? Promise.resolve()).then(job, job);
@@ -285,6 +381,42 @@ function ago(ms) {
   return `${Math.round(m / 1440)}d ago`;
 }
 
+// Codex keeps sessions as <CODEX_HOME>/sessions/YYYY/MM/DD/rollout-…-<id>.jsonl;
+// the first line holds the cwd, session_index.jsonl the titles.
+function listCodexSessions(cwd) {
+  const titles = new Map();
+  try {
+    for (const e of jsonLines(readFileSync(join(CODEX_HOME, "session_index.jsonl"), "utf8"))) titles.set(e.id, e.thread_name);
+  } catch {}
+  const files = [];
+  const walk = (dir, depth) => {
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const f = join(dir, e.name);
+      if (e.isDirectory() && depth < 3) walk(f, depth + 1);
+      else if (e.name.endsWith(".jsonl")) files.push({ f, mtime: statSync(f).mtimeMs });
+    }
+  };
+  walk(join(CODEX_HOME, "sessions"), 0);
+  return files
+    .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, 300)
+    .flatMap(({ f, mtime }) => {
+      const head = readSlice(f, false, 4000);
+      const id = head.match(/"id":"([^"]+)"/)?.[1];
+      const dir = head.match(/"cwd":"((?:[^"\\]|\\.)*)"/)?.[1];
+      if (!id || dir !== cwd) return [];
+      return [{ id, cwd, title: String(titles.get(id) ?? `Codex chat ${new Date(mtime - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16).replace("T", " ")}`), mtime }];
+    });
+}
+
+const sessionsFor = (c) => (c.engine === "codex" ? listCodexSessions(c.cwd) : listSessions(c.cwd));
+
 // ---- WhatsApp messages (the hub's "buttons" / "list" payloads) -----------
 // Limits: 3 buttons (20 chars), 10 list rows (title 24, description 72).
 
@@ -295,9 +427,9 @@ function mainMenu(id, intro) {
   return {
     type: "buttons",
     body:
-      `${intro ? `${intro}\n\n` : ""}Project: ${tilde(c.cwd)}\n` +
+      `${intro ? `${intro}\n\n` : ""}${label(c.engine)} on the PC\nProject: ${tilde(c.cwd)}\n` +
       `Session: ${c.sessionId ? "continuing the last one" : "new"}\n\n` +
-      "Type a request any time. Send *claude* to come back here.\n" +
+      `Type a request any time. Send *${c.engine === "codex" ? "codex" : "claude"}* to come back here.\n` +
       "(Don't send \"menu\" or \"apps\": the shared number uses those to switch apps.)",
     buttons: [
       { id: "m:projects", title: "Projects" },
@@ -333,7 +465,7 @@ function projectsMenu(id, page = 0) {
   return {
     type: "list",
     body:
-      `${all.length} projects. Pick the folder Claude should work in. Now: ${tilde(current)}\n\n` +
+      `${all.length} projects. Pick the folder ${label(convo(id).engine)} should work in. Now: ${tilde(current)}\n\n` +
       "Or type: cd umall (any project name) or cd ~/any/folder",
     buttonText: "Projects",
     sections: [{ title: page ? `Projects, page ${page + 1}` : "Projects", rows: [...rows, ...pager("projects", page, all.length, PAGE)] }],
@@ -342,7 +474,7 @@ function projectsMenu(id, page = 0) {
 
 function sessionsMenu(id, page = 0) {
   const c = convo(id);
-  const all = listSessions(c.cwd);
+  const all = sessionsFor(c);
   // 8 per page: the first row is always "New session".
   const list = all.slice(page * 8, (page + 1) * 8);
   return {
@@ -377,26 +509,26 @@ function setProject(id, path) {
   } catch {
     return [text(`${tilde(cwd)} isn't a folder on the PC.`)];
   }
-  sessions[id] = { cwd };
+  sessions[id] = { cwd, engine: convo(id).engine };
   saveSessions();
   return [mainMenu(id, `Switched to ${tilde(cwd)}. Your next message starts a new session there.`)];
 }
 
 function setSession(id, sessionId) {
   const c = convo(id);
-  const s = listSessions(c.cwd).find((x) => x.id === sessionId);
+  const s = sessionsFor(c).find((x) => x.id === sessionId);
   if (!s) return [text("That session is no longer there."), sessionsMenu(id)];
   c.sessionId = s.id;
   saveSessions();
   return [text(`Continuing "${short(s.title, 60)}" (${ago(s.mtime)}). Send your next request.`)];
 }
 
-/** Menu commands and taps. Returns messages, or null when it's a Claude request. */
+/** Menu commands and taps. Returns messages, or null when it's a request for the agent. */
 async function command(id, input, choice) {
   const key = choice ?? input.toLowerCase().replace(/^\//, "");
   // "menu", "apps" and "support" never get here: the WhatsApp hub keeps those
   // for its own app picker.
-  if (key === "m:menu" || /^(claude|help|start|options|hi|hello)$/.test(key)) return [mainMenu(id)];
+  if (key === "m:menu" || /^(claude|codex|help|start|options|hi|hello)$/.test(key)) return [mainMenu(id)];
   const paged = choice?.match(/^m:(projects|sessions):(\d+)$/);
   if (paged) return [paged[1] === "projects" ? projectsMenu(id, Number(paged[2])) : sessionsMenu(id, Number(paged[2]))];
   if (key === "m:projects" || /^(projects?|folders?)$/.test(key)) return [projectsMenu(id)];
@@ -404,36 +536,47 @@ async function command(id, input, choice) {
   if (key === "m:new" || /^(new|reset|clear)$/.test(key)) {
     delete convo(id).sessionId;
     saveSessions();
-    return [text(`Started a fresh Claude session in ${tilde(convo(id).cwd)}. Send your request.`)];
+    return [text(`Started a fresh ${label(convo(id).engine)} session in ${tilde(convo(id).cwd)}. Send your request.`)];
   }
   if (key === "status" || key === "where") return [mainMenu(id)];
   if (choice?.startsWith("p:")) return setProject(id, choice.slice(2));
   if (choice?.startsWith("s:")) return setSession(id, choice.slice(2));
   const cd = input.match(/^\/?cd\s+(.+)$/i);
   if (cd) return setProject(id, cd[1].trim());
+  if (/^\/?login$/i.test(input) && convo(id).engine === "codex") {
+    return [text("Codex uses the ChatGPT sign-in saved on the PC (run `codex login` there if it expires).")];
+  }
   if (/^\/?login$/i.test(input)) return [text(await startLogin())];
   const code = input.match(/^\/?code\s+(\S+)$/i);
   if (code) return [text(await finishLogin(code[1]))];
   return null;
 }
 
-async function handle(id, input, choice) {
+async function handle(id, input, choice, engine) {
   const trimmed = input.trim();
+  const c0 = convo(id);
+  if (c0.engine !== engine) {
+    // Switching engines: a session id from the other one can't be resumed.
+    if (c0.engine || engine === "codex") delete c0.sessionId;
+    c0.engine = engine;
+    saveSessions();
+  }
   const menu = await command(id, trimmed, choice);
   if (menu) return menu;
 
   const c = convo(id);
-  let r = await runClaude(trimmed, c.cwd, c.sessionId);
-  if (!r.ok && c.sessionId && /no conversation found|session/i.test(r.error ?? "")) {
+  const run = engine === "codex" ? runCodex : runClaude;
+  let r = await run(trimmed, c.cwd, c.sessionId);
+  if (!r.ok && c.sessionId && /no conversation found|session|thread|not found/i.test(r.error ?? "")) {
     // Saved session is gone (e.g. cleaned up); start over rather than fail forever.
     delete c.sessionId;
-    r = await runClaude(trimmed, c.cwd);
+    r = await run(trimmed, c.cwd);
   }
   if (r.sessionId) {
     c.sessionId = r.sessionId;
     saveSessions();
   }
-  return [text(r.ok ? r.text || "(done, no text reply)" : `Claude error: ${r.error}`)];
+  return [text(r.ok ? r.text || "(done, no text reply)" : `${label(engine)} error: ${r.error}`)];
 }
 
 function authorized(req) {
@@ -465,11 +608,12 @@ createServer((req, res) => {
       return send(res, 400, { error: "invalid json" });
     }
     const { conversationId, text: input, choice } = body ?? {};
+    const engine = body?.engine === "codex" ? "codex" : "claude";
     const pick = typeof choice === "string" && choice ? choice : undefined;
     if (typeof conversationId !== "string" || typeof input !== "string" || (!input.trim() && !pick)) {
       return send(res, 400, { error: "conversationId and text are required" });
     }
-    const messages = await enqueue(conversationId, () => handle(conversationId, input, pick));
+    const messages = await enqueue(conversationId, () => handle(conversationId, input, pick, engine));
     // `reply` keeps older API builds working: all text joined.
     const reply = messages.map((m) => m.message ?? m.body).join("\n\n");
     send(res, 200, { reply, messages });
